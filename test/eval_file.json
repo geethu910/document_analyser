@@ -1,0 +1,10 @@
+[
+  {"query": "Who hires Sherlock Holmes in A Scandal in Bohemia?",
+   "expected_answer": "The King of Bohemia"},
+
+  {"query": "Who arrests criminals in most cases?",
+   "expected_answer": "Inspector Lestrade"},
+  
+  {"query": "What is Holmes’ profession?",
+   "expected_answer": "Consulting detective"}
+]
