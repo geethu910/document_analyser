@@ -2,6 +2,7 @@
 Database models and initialization using FastAPI-Users (async)
 """
 import os
+from pathlib import Path
 import uuid
 from uuid import uuid4
 from datetime import datetime
@@ -13,6 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import DeclarativeBase, relationship
 from fastapi import Depends
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase, SQLAlchemyBaseUserTableUUID
+
+# ✅ Create results directory if it doesn't exist
+RESULTS_DIR = Path("./results")
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Database URL - use async driver
 DB_URL = os.getenv('DATABASE_URL', 'sqlite+aiosqlite:///./results/app_db.sqlite')
@@ -51,13 +56,15 @@ class UploadedFile(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)  # Use UUID for file ID
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
     file_name = Column(String, index=True, nullable=False)  # ✅ USEFUL - you'll search by name
-    file_hash = Column(String, unique=True, nullable=False)  # SHA-256 for deduplication
+    file_hash = Column(String, nullable=False)  # SHA-256 for deduplication
     # file_path = Column(String, nullable=False)
     file_size = Column(Integer, nullable=False)
     upload_time = Column(DateTime, default=datetime.utcnow)
     status = Column(String, default="indexed")  # indexed, processing, failed
     file_type = Column(String(20))  # pdf, docx, txt (derived from extension)
     user = relationship("User", back_populates="uploaded_files")
+    vector_count = Column(Integer, nullable=True)  # Store total chunks indexed for analytics
+    # vector_count / num_chunks can be added later for analytics
 
 
 class SearchHistory(Base):
@@ -67,9 +74,8 @@ class SearchHistory(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)  # Use UUID for search history ID
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
     query = Column(String, nullable=False, index=True)
-    results_count = Column(Integer, nullable=False)
+    answer = Column(String, nullable=False)
     search_time = Column(DateTime, default=datetime.utcnow)
-    
     user = relationship("User", back_populates="search_history")
 
 

@@ -87,24 +87,29 @@ class FileSearch:
         )
         self._initialized = True # mark as initialized, this is done to prevent re initialisation of the same object (we already make it as singleton via means of overriding __new__)
         self.groq_client = Groq(api_key=GROQ_API_KEY)
-        self.file_tracker  = FileTracker()
-    
-    def load_file(self, file_path: str) -> None:
+        # self.file_tracker  = FileTracker()
+
+    def load_file(self, file_path: str, user_id: str, file_hash: str, original_file_name: str) -> int:
         """Load a file (txt, pdf, docx), extract text, and split into sentences."""
-        if not os.path.isfile(file_path):
-            print("File doesn't exists, please check path")
-            return
-        # check file loaded
-        if self.file_tracker.check_file_loaded(file_path=file_path):
-            # check if file is already indexed and it it is uptodate
-            if self.file_tracker.is_indexed(file_path=file_path):
-                print('file already exists')
-                return
-            else:
-                # file outdated, need to remove from both vector db and json
-                print(f"{file_path} has changed — re-indexing...")
-                self._delete_from_db()
-                
+        # if not os.path.isfile(file_path):
+        #     print("File doesn't exists, please check path")
+        #     return
+        # # check file loaded
+        # if self.file_tracker.check_file_loaded(file_path=file_path):
+        #     # check if file is already indexed and it it is uptodate
+        #     if self.file_tracker.is_indexed(file_path=file_path):
+        #         print('file already exists')
+        #         return
+        #     else:
+        #         # file outdated, need to remove from both vector db and json
+        #         print(f"{file_path} has changed — re-indexing...")
+        #         self._delete_from_db(file_path)
+        # Step 1: Check if already processed (by hash) --> checking if it is indexed by another users.
+        if self._hash_exists_in_db(file_hash):
+            print(f"Found existing vectors (hash: {file_hash[:8]}...)")
+            return self._reuse_embeddings(file_hash, user_id, file_path, original_file_name)
+        # Step 2: Process new file separately 
+        # TODO: include _delete_db functionality incase the file is outdated
         if file_path.endswith('.txt'):
             pages = self._extract_text_from_text(file_path)
         elif file_path.endswith('.pdf'):
@@ -113,76 +118,141 @@ class FileSearch:
             pages = self._extract_text_from_word(file_path)
         else:
             print('Unsupported file type')
-            return
-        self._add_to_db(file_path, pages)
+            return 0
+        return self._add_to_db(file_path, pages, user_id, file_hash, original_file_name)
 
         # add file info to json/ sqlite db
-        self.file_tracker.add_file(file_path=file_path)
-    
+        # self.file_tracker.add_file(file_path=file_path)
+
+    def _hash_exists_in_db(self, file_hash: str) -> bool:
+        """Check if file with this hash already exists"""
+        results = self.collection.get(where={"file_hash": file_hash})
+        return len(results['ids']) > 0
+
+    def _reuse_embeddings(self, file_hash: str, user_id: str, file_path: str, original_file_name: str) -> int:
+        """Reuse existing embeddings for a new user (DEDUPLICATION)"""
+        # Get all chunks for the given file hash
+        results = self.collection.get(where={"file_hash": file_hash})
+        if not len(results['ids']) > 0:
+            return 0
+        print(f"Reusing {len(results['ids'])} chunks for user {user_id}")
+        new_ids = []
+        new_metadatas = []
+        user_id_str = str(user_id)
+
+        for metadata in results['metadatas']:
+            new_id = f"{user_id_str}_{original_file_name}_{metadata['page_num']}_{metadata['chunk']}"
+            new_ids.append(new_id)
+
+            # update metadata
+            new_metadata = {
+                "user_id": user_id_str,
+                "file": original_file_name,
+                "file_hash": file_hash,
+                "chunk": metadata['chunk'],
+                "page_num": metadata['page_num'],
+                "shared_from": metadata.get("user_id", "original")
+            }
+            new_metadatas.append(new_metadata)
+        # ADD TO DB ONCE (all chunks at once)
+        with FileSearch._lock:
+            self.collection.add(
+                ids=new_ids,
+                embeddings=results['embeddings'],
+                documents=results['documents'],
+                metadatas=new_metadatas
+            )
+        chunk_count = len(new_ids)
+        print(f"Created {chunk_count} vectors for user {user_id}")
+        return chunk_count
+
     def _extract_text_from_pdf(self, file_path: str) -> list[PageEntry]:
         """Extract text from a PDF file"""
-        doc = pymupdf.open(file_path)
-        pages = []
-        for page_num, page in enumerate(doc, 1):
-            text = page.get_text("text").strip()
-            if len(text) > 10:  # ignore empty pages
-                pages.append(PageEntry(page_num=page_num, text=text))
-        return pages
+        doc = None
+        try:
+            doc = pymupdf.open(file_path)
+            pages = []
+            for page_num, page in enumerate(doc, 1):
+                text = page.get_text("text").strip()
+                if len(text) > 10:  # ignore empty pages
+                    pages.append(PageEntry(page_num=page_num, text=text))
+            return pages
+        finally:
+            if doc is not None:
+                doc.close()
 
-    def _add_to_db(self, file_path: str, pages: list[PageEntry]):
+    def _add_to_db(self, file_path: str, pages: list[PageEntry], user_id: str, file_hash: str, original_file_name: str):
         # Split text into smart chunks
         # Chunks per page -> embeds -> stores chunk + page metadata."""
         # pages -> page aware chunking (with overlap tokens + chunk_size as 600 + metadata (chunk no, pageno etc) Rebuild the context around a result (show surrounding text)) 
         # -> embeddings -> store in chroma(vector db) -> semantic search
         print(f'########## indexed pages:: {len(pages)}')
+
+        # Collect ALL chunks first (before writing to DB)
+        all_ids = []
+        all_metadatas = []
+        all_embeddings = []
+        all_documents = []
+
         for page in pages:
 
             chunks = self.text_splitter.split_text(page.text)
-            print('########## ADDING chunks')
-            ids = []
-            metadatas = []
+            # print('########## ADDING chunks')
+            page_ids = []
+            page_metadatas = []
             # chunks:i is added as metadate here, as it can Trace back to the original document position (page, section, chunk).
             # Rebuild the context around a result (show surrounding text).
             for i in range(len(chunks)):
 
-                ids.append(f"{os.path.basename(file_path)}_{page.page_num}_{i}")
-                metadatas.append({"file": os.path.basename(file_path), "chunk": i, "page_num": page.page_num})
-                # metadatas.append(DocMetadata(file = os.path.basename(file_path), chunk = i, page_num = page.page_num))
+                page_ids.append(f"{str(user_id)}_{original_file_name}_{page.page_num}_{i}")
+                page_metadatas.append({
+                    "user_id": str(user_id), # string as chromadb metadta doesn't acceppt uuid type
+                    "file": original_file_name,
+                    "file_hash": file_hash,
+                    "chunk": i,
+                    "page_num": page.page_num})
 
             # Step 2: Convert sentences into embeddings (vectors)
             # sentence_embeddings = self.model.encode(docs).tolist()  # Encodes all documents (or text chunks) at once in a single batch, used when the list docs is small 
             # Embed in batches (efficient)
-            sentence_embeddings = self.model.encode(chunks, batch_size=16, show_progress_bar=True).tolist() # Encodes the input in smaller batches of 16 chunks at a time
+            sentence_embeddings = self.model.encode(chunks, batch_size=16, show_progress_bar=False).tolist() # Encodes the input in smaller batches of 16 chunks at a time
 
-            # Add to Chroma (with metadata)
-            # requires one list of IDs and one list of metadatas aligned with each document
-            # Thread safe db add
-            with FileSearch._lock:
-                self.collection.add(
-                    documents=chunks,
-                    embeddings=sentence_embeddings,
-                    ids= ids,
-                    metadatas=metadatas
-                )
+            # collect all info
+            all_ids.extend(page_ids)
+            all_metadatas.extend(page_metadatas)
+            all_embeddings.extend(sentence_embeddings)
+            all_documents.extend(chunks)
             # for tracking
             # self.loaded_files[file_path] = len(chunks)
-            print(f"✅ Indexed {len(chunks)} chunks from {page.page_num}")
+            print(f"Indexed {len(chunks)} chunks from {page.page_num}")
 
-        return
-        
-    def _extract_text_from_word(self, file_path: str) -> None:
+        # Add to Chroma (with metadata)
+        # requires one list of IDs and one list of metadatas aligned with each document
+        # Thread safe db add
+        with FileSearch._lock:
+            self.collection.add(
+                ids= all_ids,
+                documents=all_documents,
+                embeddings=all_embeddings,
+                metadatas=all_metadatas
+            )
+        return len(all_ids)  # return total chunks indexed for tracking
+
+    def _extract_text_from_word(self, file_path: str) -> list[PageEntry]:
         """Extract text from word (.docx) file"""
         pages = []
         doc = Document(file_path)
         file_contents =  '\n'.join(para.text for para in doc.paragraphs if para.text.strip())
-        return pages.append(PageEntry(page_num=None, text=file_contents))
+        pages.append(PageEntry(page_num=None, text=file_contents))
+        return pages
 
-    def _extract_text_from_text(self, file_path: str) -> None:
+    def _extract_text_from_text(self, file_path: str) -> list[PageEntry]:
         """Extract text from a .txt file"""
         pages = []
         with open (file_path, 'r', encoding='utf-8', errors='replace') as file:
             file_contents = file.read()
-        return pages.append(PageEntry(page_num=None, text=file_contents))
+        pages.append(PageEntry(page_num=None, text=file_contents))
+        return pages
 
     def _get_embedding(self, search_key: str) -> str:
         """Return cached embedding if available."""
@@ -193,16 +263,16 @@ class FileSearch:
         self.embedding_cache[search_key] = embedding
         return embedding
         
-    def __keyword_Search(self, search_key:str) -> list:
+    def __keyword_search(self, search_key:str, user_id: str) -> list:
         """Search for keyword in stored sentences."""
         # step4: query
         query_embedding = self._get_embedding(search_key)
         # 7. Search in Chroma
         results = self.collection.query(
             query_embeddings=query_embedding,
-            n_results=N_RESULTS # return top 5
+            n_results=N_RESULTS, # return top 5
+            where={"user_id": user_id}
         )
-
         filtered_results = []
         # filtering response based on cosine similarity score
         for doc, score, meta in zip(results['documents'][0],results['distances'][0], results["metadatas"][0]):
@@ -219,15 +289,23 @@ class FileSearch:
     #         return True
     #     return False
 
-    def _delete_from_db(self, file_path:str) -> None:
+    def delete_from_db(self, file_hash:str, user_id: str) -> None:
         """ delete entries from vector db """
         with FileSearch._lock:
-            self.collection.delete(where={"file": os.path.basename(file_path)})
+            # Use $eq operator for each condition
+            self.collection.delete(
+                where={
+                    "$and": [
+                        {"file_hash": {"$eq": file_hash}},
+                        {"user_id": {"$eq": str(user_id)}}
+                    ]
+                }
+            )
 
-    def keyword_Search(self, query: str):
+    def keyword_search(self, query: str, user_id: str) -> None:
         """Generate an answer from retrieved context using Ollama (RAG)"""
         # Step 1: Get top semantic matches
-        search_results = self.__keyword_Search(query)
+        search_results = self.__keyword_search(query, user_id)
 
         if not search_results:
             return "No relevant context found in the indexed documents."
@@ -255,11 +333,11 @@ class FileSearch:
             {"role": "system", "content": "You are a helpful assistant that answers based only on provided context. If the answer is not explicitly stated, say ‘Not found in the text.’"},
             {'role': 'user', 'content': f'Context: \n {context}\n Question: {query} Answer with citations like: (File: X, Page: Y)'}], model=LLM_MODEL,)
         # print(chat_completion.choices[0].message.content)
-        return chat_completion.choices[0].message.content
+        return chat_completion.choices[0].message.content, search_results
         
-    def list_files(self):
-        """List all loaded files"""
-        return self.file_tracker.list_files()
+    # def list_files(self):
+    #     """List all loaded files"""
+    #     return self.file_tracker.list_files()
 
 if __name__ == '__main__':
     import time
