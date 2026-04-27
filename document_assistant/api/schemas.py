@@ -17,12 +17,12 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
 
 class UserCreate(schemas.BaseUserCreate):
     """User create schema (request for registration)"""
-    pass
+    email: EmailStr
 
 
 class UserUpdate(schemas.BaseUserUpdate):
     """User update schema"""
-    pass
+    email: EmailStr
 
 
 # File and Search schemas remain the same

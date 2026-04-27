@@ -3,6 +3,9 @@ Authentication module using FastAPI-Users (async)
 """
 import os
 import uuid
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from typing import Optional
 from fastapi import Depends, Request
 from fastapi_users import FastAPIUsers
@@ -21,8 +24,57 @@ from document_assistant.api.database import User, get_user_db
 load_dotenv()
 
 # Security constants
-SECRET_KEY = os.getenv('SECRET_KEY', 'sakjdhkjad872323')
+SECRET_KEY = os.getenv('SECRET_KEY', 'sakjdhkjad872323') # used to sign jwt tokens and verification/ reset tokens. must be random secret
+# can be created using:: python -c "import secrets; print(secrets.token_urlsafe(32))" or openssl rand -hex 32
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com") # smtp server hostname used to send emails.
+# eg: smtp.gmail.com for Gmail, or your own SMTP server if you have one. This is used for sending verification emails and password reset emails to users.
 
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587)) # SMTP port to connect to
+# common values: 587 for STARTTLS (), 465 for SMTPS, 25 for plain SMTP
+SMTP_USER = os.getenv("SMTP_USER", "")  # the username/login for the SMTP account, often an email address or API user name from your mail provider
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")  # the password or API key for the SMTP account
+EMAIL_FROM = os.getenv("EMAIL_FROM", "no-reply@example.com")  # the sender address shown in verification emails
+# should be a valid address you control, e.g. no-reply@yourdomain.com
+
+
+async def send_verification_email(email: str, token: str, request: Request):
+    """Send verification email with token link"""
+    print('invoking send_verification_email with:', email, token)
+    # verification_link = f"{request.base_url}api/auth/verify?token={token}"
+    # Link goes to /verify (static file), not /api/auth/verify (API endpoint)
+    verification_link = f"{request.base_url}verify?token={token}"
+    message = MIMEMultipart("alternative")
+    message["Subject"] = "Verify your email"
+    message["From"] = EMAIL_FROM
+    message["To"] = email
+    
+    text = f"Click the link to verify your account: {verification_link}"
+    html = f"""\
+    <html>
+      <body style="font-family: Arial, sans-serif;">
+        <h2>Email Verification</h2>
+        <p>Click the link below to verify your account:</p>
+        <a href="{verification_link}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">
+          Verify Email
+        </a>
+        <p>Or copy and paste this link in your browser:</p>
+        <p>{verification_link}</p>
+        <p style="color: #666; font-size: 12px;">This link expires in 24 hours.</p>
+      </body>
+    </html>
+    """
+    
+    message.attach(MIMEText(text, "plain"))
+    message.attach(MIMEText(html, "html"))
+    
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(EMAIL_FROM, email, message.as_string())
+        print(f"Verification email sent to {email}")
+    except Exception as e:
+        print(f"Failed to send email: {e}")
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     """User manager for FastAPI-Users with UUID support"""
@@ -30,14 +82,19 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     verification_token_secret = SECRET_KEY
 
     async def on_after_register(self, user: User, request: Optional[Request] = None):
-        print(f"User {user.id} has registered.")
+        print(f"User registered: {user.email}")
 
     async def on_after_forgot_password(self, user: User, request: Optional[Request] = None):
-        print(f"User {user.id} has forgot their password.")
-
-    async def on_after_request_verify(self, user: User, request: Optional[Request] = None):
-        print(f"Verification requested for user {user.id}.")
-
+        print(f"User {user.email} has forgot their password.")
+    
+    async def on_after_verify(self, user: User, request: Optional[Request] = None):
+        print(f"User verified: {user.email}")
+    
+    async def on_after_request_verify(
+        self, user: User, token: str, request: Optional[Request] = None
+    ):
+        print(f"Verification requested for user {user.id}. Verification token: {token}")
+        await send_verification_email(user.email, token, request)
 
 # Configure Bearer transport
 # This defines how the authentication token is sent in requests. We use the standard Bearer token in the Authorization header, and specify the login URL for obtaining tokens.
@@ -82,5 +139,18 @@ current_superuser = auth_manager.current_user(active=True, superuser=True)
 
 """
 users:  "email": "gtk1@gmail.com"/ "password1", "gtk2@gmail.com"/ "password2"
+gtk1@mailinator.com/ password1
+"""
 
+# ooauth2 flow::
+"""
+User clicks “Login with Google”
+Redirect to Google
+User logs in + consents
+Google sends back:authorization code
+Your backend sends this code to Google’s token endpoint
+Google returns:
+    access token
+    refresh token (optional)
+    ID token (JWT) (if using OpenID Connect)
 """
