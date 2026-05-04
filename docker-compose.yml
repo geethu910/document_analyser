@@ -1,0 +1,85 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: rag_postgres
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432" # HOST_PORT : CONTAINER_PORT
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:  # add healthcheck to ensure Postgres is ready before other services depend on it
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped # If the container crashes or exits, start it again.
+
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.0   # pin version instead of latest
+    container_name: rag_qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped    # restart policy to ensure it stays up
+
+
+volumes:  # define named volumes for data persistence
+  postgres_data:
+  qdrant_data:
+
+# docker run: Start one container with these options
+# docker compose: Start multiple containers defined in this file with one command (docker compose up), -d means run in detached mode (in the background)
+# docker file: Containerize the application/ Build a container image
+# docker compose up: 
+#   # Start all containers defined in the docker-compose.yml file
+#   # creates them if they doesn't exists
+#   # # if you specify image: postgres:15-alpine --> docker will pull it if not present for postgress
+#   # # if specified: build: . --> Docker will build an image from your Dockerfile
+#   # # 
+#   # Reuse existing volumes automatically
+
+# docker compose down: Stop and remove all containers defined in the docker-compose.yml file,
+#   # doesnot delete volumes
+# docker compose down -v : Stop and remove all containers and associated volumes defined in the docker-compose.yml file
+# docker image:
+#   # read-only blueprint for your application./ static
+#   # contains instructions for building a container image, python, dependencies,env setup
+#   # built from a Dockerfile
+# Docker Container
+#   # runtime instance of a docker image
+#   # created from docker image using docker run or docker compose up
+#   # isolated environment where your application runs,its own file system view, network interfaces, process space
+#   # can be started, stopped, moved, deleted
+#   # can be connected to other containers, host machine, external networks
+    # optionally attach volumes(for persistent data storage) and custom network fror comm between containers
+
+# service vs containers
+# | Concept    | Service                      | Container                  |
+# | ---------- | ---------------------------- | -------------------------- |
+# | Defined in | `docker-compose.yml`         | Created at runtime         |
+# | Purpose    | Blueprint/config             | Running instance           |
+# | Naming     | Logical (e.g., `db`)         | Generated (`project-db-1`) |
+# | Scaling    | Can define multiple replicas | Each replica = container   |
+# services:
+#   app:
+#     build: .
+#     ports:
+#       - "8000:8000"
+#     depends_on:
+#       postgres:
+#         condition: service_healthy

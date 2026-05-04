@@ -18,6 +18,7 @@ from document_assistant.api.schemas import (
     FileUploadResponse, SearchResponse, UserFilesResponse
 )
 from document_assistant.services.file_service import FileService
+from document_assistant.services.cache_service import *
 
 # Router
 router = APIRouter()
@@ -145,6 +146,8 @@ async def upload_file(
         await session.commit()  # Commit the transaction to save the file metadata in the database
         await session.refresh(new_file)
 
+        # increment cache version of user inorder to exclude stale versions
+        await invalidate_user_cache(current_user.id)
         return FileUploadResponse(
             file_id=str(new_file.id),
             file_name=new_file.file_name,
@@ -258,6 +261,25 @@ async def search_documents(
 ):
     """Search documents using semantic search"""
     try:
+        # check cache
+        cached = await get_cached_search(query, current_user.id)
+        if cached:
+            print('########### cache hit')
+            search_record = SearchHistory(
+                user_id = current_user.id,
+                query = query,
+                answer = cached['answer'],
+                search_time = datetime.datetime.utcnow()
+            )
+            session.add(search_record)
+            await session.commit()
+            await session.refresh(search_record)
+            return SearchResponse(
+                **cached, search_id=str(search_record.id),
+                created_at=search_record.search_time
+            )
+
+        # search
         answer, search_results = get_file_service().keyword_search(query, str(current_user.id))
         # Format matches for response
         matches = [
@@ -279,6 +301,16 @@ async def search_documents(
         session.add(search_record)
         await session.commit()
         await session.refresh(search_record)
+
+        # cache results
+        response_payload = {
+            "query": query,
+            "answer": answer,
+            "matches": matches,
+            "match_count": len(matches)
+            }
+        print('###### cache miss:: adding to db')
+        await cache_search(query, current_user.id, response_payload)
         return SearchResponse(
             query=query, answer=answer, search_id=str(search_record.id),
             created_at=search_record.search_time, matches=matches,

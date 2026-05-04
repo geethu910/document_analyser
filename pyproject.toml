@@ -25,6 +25,8 @@ bcrypt = "^4.1.0"
 sqlalchemy = {extras = ["asyncio"], version = "^2.0.0"}
 aiosqlite = "^0.20.0"
 python-dotenv = "^1.1.0"
+asyncpg = "*" 
+redis = "*"
 
 # Document Processing
 pymupdf = "^1.26.0"
@@ -35,6 +37,7 @@ chromadb = "^1.1.0"
 sentence-transformers = "^5.1.0"
 scikit-learn = "^1.7.0"
 pandas = "^2.3.0"
+# qdrant-client = "*"
 
 # LLM Integration
 groq = "^0.32.0"
