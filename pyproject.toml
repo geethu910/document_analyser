@@ -3,7 +3,7 @@ name = "document-assistant"
 version = "1.0.0"
 description = "Document analysis assistant with FastAPI, SQLAlchemy, and LLM integration"
 authors = ["Your Name <you@example.com>"]
-readme = "README.md"
+# readme = "README.md"
 packages = [{include = "document_assistant"}]
 
 [tool.poetry.dependencies]
@@ -38,6 +38,7 @@ sentence-transformers = "^5.1.0"
 scikit-learn = "^1.7.0"
 pandas = "^2.3.0"
 # qdrant-client = "*"
+rank_bm25 = "^0.2.2"
 
 # LLM Integration
 groq = "^0.32.0"

@@ -49,7 +49,7 @@ class SearchMatch(BaseModel):
     file: str
     page: Optional[int]
     chunk: int
-    score: float  # ✅ ADD: Similarity score
+    score: float
     text: str
 
 class SearchResponse(BaseModel):

@@ -18,3 +18,6 @@ class FileService:
 
     def keyword_search(self, query: str, user_id: str) -> tuple[str, list[dict]]:
         return self.file_search.keyword_search(query, user_id)
+
+    def hybrid_search(self, query: str, user_id: str) -> tuple[str, list[dict]]:
+        return self.file_search.hybrid_search(query, user_id)

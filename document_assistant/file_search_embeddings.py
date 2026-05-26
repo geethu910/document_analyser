@@ -1,5 +1,6 @@
 import chromadb
 import os
+import torch
 import pandas as pd
 import pymupdf  #     pip install PyMuPDF
 from groq import Groq  # hosted open-model provider
@@ -7,10 +8,11 @@ import threading
 from dotenv import load_dotenv
 from docx import Document # pip install python-docx
 from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from document_assistant.utils.file_tracker import FileTracker
 from dataclasses import dataclass
+from rank_bm25 import BM25Okapi
 
 # TODO: Need to have a possiblity for hybrid search (semantic + keyword search), soemthing like following::
 # 1. Hybrid (weighted fusion): add weighted hybrid (BM25 + 0.7/0.3 fusion).
@@ -21,6 +23,7 @@ from dataclasses import dataclass
  
 THRESHOLD = 0.3 # 0.3–0.5
 N_RESULTS = 5
+CE_THRESHOLD = 0.1
 DB_PATH = 'results/chroma_db'
 
 load_dotenv()
@@ -85,9 +88,13 @@ class FileSearch:
             chunk_size=600,     # measured in tokens (not characters)
             chunk_overlap=100
         )
-        self._initialized = True # mark as initialized, this is done to prevent re initialisation of the same object (we already make it as singleton via means of overriding __new__)
+
         self.groq_client = Groq(api_key=GROQ_API_KEY)
-        # self.file_tracker  = FileTracker()
+        self.bm25_indexes: dict = {}   # { user_id: BM25Okapi }
+        self.bm25_chunks: dict = {}    # { user_id: [chunk texts] }
+        self.bm25_ids: dict = {}       # { user_id: [chunk ids] }
+        self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', activation_fn=torch.nn.Sigmoid()) # chunks are 600 token, 110 token got truncated
+        self._initialized = True # mark as initialized, this is done to prevent re initialisation of the same object (we already make it as singleton via means of overriding __new__)
 
     def load_file(self, file_path: str, user_id: str, file_hash: str, original_file_name: str) -> int:
         """Load a file (txt, pdf, docx), extract text, and split into sentences."""
@@ -186,7 +193,6 @@ class FileSearch:
         # Chunks per page -> embeds -> stores chunk + page metadata."""
         # pages -> page aware chunking (with overlap tokens + chunk_size as 600 + metadata (chunk no, pageno etc) Rebuild the context around a result (show surrounding text)) 
         # -> embeddings -> store in chroma(vector db) -> semantic search
-        print(f'########## indexed pages:: {len(pages)}')
 
         # Collect ALL chunks first (before writing to DB)
         all_ids = []
@@ -197,7 +203,6 @@ class FileSearch:
         for page in pages:
 
             chunks = self.text_splitter.split_text(page.text)
-            # print('########## ADDING chunks')
             page_ids = []
             page_metadatas = []
             # chunks:i is added as metadate here, as it can Trace back to the original document position (page, section, chunk).
@@ -265,21 +270,26 @@ class FileSearch:
         
     def __keyword_search(self, search_key:str, user_id: str) -> list:
         """Search for keyword in stored sentences."""
+        import time
+        t0 = time.time()
         # step4: query
         query_embedding = self._get_embedding(search_key)
+        print(f"  embed: {(time.time()-t0)*1000:.0f}ms")
         # 7. Search in Chroma
+        t1 = time.time()
         results = self.collection.query(
             query_embeddings=query_embedding,
             n_results=N_RESULTS, # return top 5
             where={"user_id": user_id}
         )
+        print(f"  chroma: {(time.time()-t1)*1000:.0f}ms")
         filtered_results = []
+        t2 = time.time()
         # filtering response based on cosine similarity score
         for doc, score, meta in zip(results['documents'][0],results['distances'][0], results["metadatas"][0]):
             if score >= THRESHOLD:
-                # print({"file": meta["file"], "score": score, "text": doc})
-                # filtered_results.append(doc)
                 filtered_results.append({"file": meta["file"], 'page': meta['page_num'], 'chunk': meta['chunk'], "score": score, "text": doc})
+        print(f"  filter: {(time.time()-t2)*1000:.0f}ms")   
         return filtered_results
         
     # def _file_already_loaded(self, file_name: str) -> bool:
@@ -304,6 +314,8 @@ class FileSearch:
 
     def keyword_search(self, query: str, user_id: str) -> None:
         """Generate an answer from retrieved context using Ollama (RAG)"""
+        import time
+        t_start = time.time()
         # Step 1: Get top semantic matches
         search_results = self.__keyword_search(query, user_id)
 
@@ -312,39 +324,273 @@ class FileSearch:
 
         # Step 2: Build the context from top chunks
         # context = '\n\n'.join(data['text'] for data in search_results)
+        # context = ''
+        # for data in search_results:
+        #     context += f'File: {data['file']} | Page: {data['page']} \n{data['text']} \n'
+        # # # Step 3: Create a RAG-style prompt
+        # # prompt = f"""You are a helpful assistant.
+        # # Use ONLY the context below to answer the question accurately and concisely.
+        # # If the answer is not contained in the context, say: "The context does not provide enough information."
+        
+        # # Context:
+        # # {context}
+
+        # # Question: {query}
+        # # Answer:
+        # # """
+
+        # # Step 4: Call llm model
+        t3 = time.time()
+        # chat_completion = self.groq_client.chat.completions.create(
+        # messages=[
+        #     {"role": "system", "content": "You are a helpful assistant that answers based only on provided context. If the answer is not explicitly stated, say ‘Not found in the text.’"},
+        #     {'role': 'user', 'content': f'Context: \n {context}\n Question: {query} Answer with citations like: (File: X, Page: Y)'}], model=LLM_MODEL,)
+        
+        # Build numbered context
+        context = ''
+        for i, data in enumerate(search_results, 1):
+            context += f'[{i}] File: {data["file"]}, Page: {data["page"]}\n{data["text"]}\n\n'
+
+        messages = [
+            {
+                "role": "system",
+                "content": """You are a precise document assistant. Follow these rules strictly:
+
+        1. Answer ONLY using the provided context — never use outside knowledge
+        2. If the query is a topic or name (not a question), summarize what the context says about it
+        3. If the answer is not in the context, respond exactly: 'Not found in the provided documents.'
+        4. Keep answers concise — 3 to 5 sentences maximum
+        5. Always cite your sources inline as [File: X, Page: Y] immediately after each claim
+        6. Never speculate or infer beyond what is explicitly stated"""
+            },
+            {
+                "role": "user",
+                "content": f"Context:\n{context}\nQuery: {query}"
+            }
+        ]
+        chat_completion = self.groq_client.chat.completions.create(messages=messages, model=LLM_MODEL, temperature=0.0, max_tokens=512)
+        print(f"  groq LLM: {(time.time()-t3)*1000:.0f}ms")
+        print(f"  total: {(time.time()-t_start)*1000:.0f}ms")
+        return chat_completion.choices[0].message.content, search_results
+
+    def hybrid_search(self, query: str, user_id: str) -> tuple:
+        """Generate an answer from retrieved context using Ollama (RAG)"""
+        # Step 1: Get top semantic matches
+        # print(f"Starting hybrid search for query: '{query}' and user_id: {user_id}")
+        search_results = self._hybrid_retrieve(query, user_id)
+        # print(f"Hybrid retrieval returned {len(search_results)} results for query: '{query}' and user_id: {user_id}")
+        if not search_results:
+            return "No relevant context found in the indexed documents."
+
+        # Step 2: Build the context from top chunks
         context = ''
         for data in search_results:
             context += f'File: {data['file']} | Page: {data['page']} \n{data['text']} \n'
-        # # Step 3: Create a RAG-style prompt
-        # prompt = f"""You are a helpful assistant.
-        # Use ONLY the context below to answer the question accurately and concisely.
-        # If the answer is not contained in the context, say: "The context does not provide enough information."
-        
-        # Context:
-        # {context}
 
-        # Question: {query}
-        # Answer:
-        # """
-
-        # Step 4: Call llm model
+        # Step 3: Call llm model
         chat_completion = self.groq_client.chat.completions.create(
         messages=[
             {"role": "system", "content": "You are a helpful assistant that answers based only on provided context. If the answer is not explicitly stated, say ‘Not found in the text.’"},
-            {'role': 'user', 'content': f'Context: \n {context}\n Question: {query} Answer with citations like: (File: X, Page: Y)'}], model=LLM_MODEL,)
-        # print(chat_completion.choices[0].message.content)
+            {'role': 'user', 'content': f'Context: \n {context}\n Question: {query} Answer with citations like: (File: X, Page: Y)'}],
+            model=LLM_MODEL
+            )
         return chat_completion.choices[0].message.content, search_results
+
+    def _rebuild_bm25_for_user(self, user_id: str) -> None:
+        results = self.collection.get(
+            where={"user_id": user_id},
+            include=["documents", "metadatas"]
+        )
+        if not results['ids']:
+            return
+        self.bm25_ids[user_id] = results['ids']  # store the chunk ids for the user
+        self.bm25_chunks[user_id] = results['documents']  # store the chunks for the user
+        corpus = [doc.lower().split() for doc in results['documents']]
+        self.bm25_indexes[user_id] = BM25Okapi(corpus)  # build BM25 index for the user's documents
+
+    def _hybrid_retrieve(self, query: str, user_id: str, top_k: int = 10) -> list:
+        """Build BM25 index for the user's documents (for keyword search)"""
+
+        """
+        RRF (Reciprocal Rank Fusion) is a method for combining multiple ranked lists (e.g., from different search algorithms). 
+        It assigns scores to items based on their ranks in each list, giving higher scores to items that appear near the top of any list. The formula for RRF is:
+
+        rrf ignores the actual scores from individual algorithms and focuses on the ranks. 
+        The constant (e.g., 60) is a tuning parameter that controls how much influence lower-ranked items have on the final score. A smaller constant gives more weight to top-ranked items, while a larger constant allows lower-ranked items to contribute more to the final ranking.
         
+        # The formula
+        rrf_score = 1 / (k + rank)
+
+        # For each chunk, sum its RRF score from both lists
+        final_score = 1/(k + bm25_rank) + 1/(k + semantic_rank)
+
+        eg:
+        chunk_4:
+        BM25 rank = 1      → 1/(60+1) = 0.01639
+        Semantic rank = 2  → 1/(60+2) = 0.01613
+        Final RRF = 0.03252  ✅ high — both agree it's good
+
+        chunk_7:
+        BM25 rank = 2      → 1/(60+2) = 0.01613
+        Semantic rank = 8  → 1/(60+8) = 0.01471
+        Final RRF = 0.03084
+
+        chunk_9:
+        BM25 rank = 15     → 1/(60+15) = 0.01333
+        Semantic rank = 1  → 1/(60+1)  = 0.01639
+        Final RRF = 0.02972
+
+        # chunk_4 wins — both systems agreed
+        # chunk_9 is still included — semantic liked it even though BM25 didn't
+        """
+        # print(f"Performing hybrid retrieval for query: '{query}' and user_id: {user_id}")
+        # bm25 
+
+        fetch_k = top_k * 4  # fetch 40 if you want top 5 final results (ce output)
+        query_tokens = query.lower().split()
+
+        if user_id not in self.bm25_indexes:
+            self._rebuild_bm25_for_user(user_id)  # build index if doesn't exists
+
+        # if still empty after rebuild
+        if user_id not in self.bm25_indexes:
+            return []
+        bm25_scores = self.bm25_indexes[user_id].get_scores(query_tokens)  # get BM25 scores for the query against all chunks
+
+        # Get top-k BM25 results (returns list of tuples (chunk index, score)), highest first
+        bm25_ranked = sorted(enumerate(bm25_scores), key=lambda x: x[1], reverse=True)[:fetch_k]
+
+        # semantic search
+        # query
+        query_embedding = self._get_embedding(query)
+        # Search in Chroma
+        results = self.collection.query(
+            query_embeddings=query_embedding,
+            n_results=fetch_k, # return top 20
+            where={"user_id": user_id}, include=["documents", "metadatas", "distances"]
+        )
+        # get top-k semantic results
+        semantic_ids = results['ids'][0]  # top 20 chunk ids
+
+        # RRF (reciprocal rank fusion)
+        # Create a dictionary to hold the combined scores
+        rrf_scores = {}
+        # BM25 contributions
+        for rank, (chunk_idx, _) in enumerate(bm25_ranked):
+            chunk_id = self.bm25_ids[user_id][chunk_idx]
+            rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0) + 1 / (60 + rank + 1)
+
+        # Semantic contributions
+        for rank, chunk_id in enumerate(semantic_ids):
+            rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0) + 1 / (60 + rank + 1)
+            #                                        ↑
+            #              .get(chunk_id, 0) handles the missing case
+            #              if chunk only in semantic → starts from 0, adds semantic score
+            #              if chunk in both → adds on top of existing BM25 score
+
+        # Final ranking
+        final_ranked_ids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:top_k]
+        results = self.collection.get(ids=final_ranked_ids, include=["documents", "metadatas"])
+
+        rrf_results = []
+        # filtering response based on cosine similarity score
+        for id, doc, meta in zip(results['ids'],results['documents'], results["metadatas"]):
+            rrf_results.append(
+                {
+                    "file": meta["file"],
+                    'page': meta['page_num'],
+                    'chunk': meta['chunk'],
+                    "score": rrf_scores[id],
+                    "text": doc
+                    }
+        )
+        # cross encoder 10 -> 5
+        return self._rerank(query, rrf_results, top_k=5)
+
+    def _rerank(self, query: str, chunks: list[dict], top_k: int = 5) -> list[dict]:
+        """Rerank chunks using CrossEncoder — call after RRF
+        """
+        # print(f"Reranking {len(chunks)} chunks with CrossEncoder...")
+        if not chunks:
+            return []
+        # def trim(text: str, max_words: int = 350) -> str:
+        #     # trim chunk text before passing to CE (CE has max token limit of 512, we can assume 1 word ~ 1.5 tokens on average, so 350 words ~ 525 tokens, leaving room for query and prompt)
+        #     words = text.split()
+        #     return ' '.join(words[:max_words]) if len(words) > max_words else text
+        # Build (query, chunk text) pairs
+        pairs = [(query, chunk['text']) for chunk in chunks]
+        # score all the pairs
+        ce_scores = self.reranker.predict(pairs)
+        # print(f"CrossEncoder scores: {ce_scores}")
+        # Attach ce score to each chunk
+        for i in range(len(chunks)):
+            chunks[i]['score'] = float(ce_scores[i])  # replaces original RRF score with CE score for final ranking, you can keep both if you want to analyze later
+        # Sort by score and return top_k, filter by weak results
+        #  direct questions → high scores, theme queries    → low scores 
+        # reranked = [chunk for chunk in chunks if chunk['score'] >= CE_THRESHOLD]
+        reranked =  sorted(chunks, key=lambda x: x['score'], reverse=True)[:top_k]
+        return reranked
+
     # def list_files(self):
     #     """List all loaded files"""
     #     return self.file_tracker.list_files()
 
 if __name__ == '__main__':
-    import time
-    search = FileSearch()
+    obj = FileSearch()
     # search.load_file(file_path='/home/geethuthomas/python_samples/document_analyser/document_assistant/data/advs.pdf')
-    search_key = 'how holmes solved the case'
+    # search_key = 'how holmes solved the case'
     # search_key1 = 'ai'
     # search.keyword_Search(search_key)
+    user_id1 = 'fbe5a183-9583-4b1b-b03e-8bcf29b66e46'
+    results = obj.hybrid_search('WHO IS sherlock holmes', user_id1)
+    print(results[0])
 
-    search.keyword_Search(search_key)
+
+
+
+"""
+BM25 vs semantic search (embeddings):
+BM25:
+- Based on term frequency and inverse document frequency.
+- Good for exact keyword matches( eg: IDS, error codes, class/ function names, version numbers)
+- Can struggle with synonyms and context.
+- Works better on smaller chunks( embedding models lose context on tiny chunks, so BM25 can be better for very short texts like error messages, code snippets, etc)
+
+Semantic Search (Embeddings):
+- Based on vector representations of text.
+- Captures semantic meaning and context.
+- More effective for complex queries and synonyms.
+
+Hybrid search = bm25 + semantic search
+| BM25                  | Semantic              |
+| --------------------- | --------------------- |
+| exact match           | conceptual match      |
+| precise               | fuzzy                 |
+| token aware           | meaning aware         |
+| strong on identifiers | strong on paraphrases |
+| deterministic         | probabilistic         |
+
+User Query -> BM25 Retrieval -> vector retrieval -> merge results -> reranker -> LLM    
+
+
+"""
+
+"""
+cross encoder re-ranking::
+Cross-encoders, process the query and document together and directly predict a relevance score. 
+This allows them to capture deeper interactions between the two texts, making them more accurate but also much slower. Because of this trade-off, 
+many retrieval systems first use a bi-encoder to retrieve top candidates and then use a cross-encoder to rerank them for better accuracy.
+
+Bi-encoders encode the query and document separately into embeddings, making them fast and scalable for semantic search. since both texts are encoded independently, they may miss fine-grained relationships between the query and document.
+"""
+
+"""
+SSE: Server send Events:
+- the client sends one HTTP request, and the server keeps the connection open, the server continuously streams updates. messages back to the client
+ client request → server keeps connection open
+                               → server pushes chunks as they arrive
+                               → client receives token by token
+Normal API call:
+  client request → server processes → single response
+
+"""

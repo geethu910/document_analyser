@@ -370,3 +370,76 @@ async def get_search_history(
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "service": "Document Assistant API"}
+
+@router.post("/api/hybrid_search", response_model=SearchResponse)
+async def hybrid_search(
+    query: str,
+    current_user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session)
+):
+    """Search documents using semantic search"""
+    try:
+        # check cache
+        cached = await get_cached_search(query, current_user.id)
+        if cached:
+            print('########### cache hit')
+            search_record = SearchHistory(
+                user_id = current_user.id,
+                query = query,
+                answer = cached['answer'],
+                search_time = datetime.datetime.utcnow()
+            )
+            session.add(search_record)
+            await session.commit()
+            await session.refresh(search_record)
+            return SearchResponse(
+                **cached, search_id=str(search_record.id),
+                created_at=search_record.search_time
+            )
+
+        # search
+        answer, search_results = get_file_service().hybrid_search(query, str(current_user.id))
+        # Format matches for response
+        matches = [
+            {
+                "file": result["file"],
+                "page": result["page"],
+                "chunk": result["chunk"],
+                "score": result["score"],
+                "text": result["text"][:300] + "..." if len(result["text"]) > 300 else result["text"]
+            }
+            for result in search_results
+        ]
+        search_record = SearchHistory(
+            user_id = current_user.id,
+            query = query,
+            answer = answer,
+            search_time = datetime.datetime.utcnow()
+        )
+        session.add(search_record)
+        await session.commit()
+        await session.refresh(search_record)
+
+        # # cache results
+        # response_payload = {
+        #     "query": query,
+        #     "answer": answer,
+        #     "matches": matches,
+        #     "match_count": len(matches)
+        #     }
+        # print('###### cache miss:: adding to db')
+        # await cache_search(query, current_user.id, response_payload)
+        return SearchResponse(
+            query=query, answer=answer, search_id=str(search_record.id),
+            created_at=search_record.search_time, matches=matches,
+            match_count=len(matches)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Search failed: {str(e)}"
+        )
+
