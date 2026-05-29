@@ -1,18 +1,20 @@
+import asyncio
 import chromadb
 import os
 import torch
 import pandas as pd
 import pymupdf  #     pip install PyMuPDF
-from groq import Groq  # hosted open-model provider
+from groq import Groq, AsyncGroq # hosted open-model provider
 import threading
 from dotenv import load_dotenv
 from docx import Document # pip install python-docx
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from document_assistant.utils.file_tracker import FileTracker
+from document_assistant import logger
 from dataclasses import dataclass
 from rank_bm25 import BM25Okapi
+import time
 
 # TODO: Need to have a possiblity for hybrid search (semantic + keyword search), soemthing like following::
 # 1. Hybrid (weighted fusion): add weighted hybrid (BM25 + 0.7/0.3 fusion).
@@ -90,6 +92,7 @@ class FileSearch:
         )
 
         self.groq_client = Groq(api_key=GROQ_API_KEY)
+        self._async_client = AsyncGroq(api_key=GROQ_API_KEY)
         self.bm25_indexes: dict = {}   # { user_id: BM25Okapi }
         self.bm25_chunks: dict = {}    # { user_id: [chunk texts] }
         self.bm25_ids: dict = {}       # { user_id: [chunk ids] }
@@ -98,22 +101,11 @@ class FileSearch:
 
     def load_file(self, file_path: str, user_id: str, file_hash: str, original_file_name: str) -> int:
         """Load a file (txt, pdf, docx), extract text, and split into sentences."""
-        # if not os.path.isfile(file_path):
-        #     print("File doesn't exists, please check path")
-        #     return
-        # # check file loaded
-        # if self.file_tracker.check_file_loaded(file_path=file_path):
-        #     # check if file is already indexed and it it is uptodate
-        #     if self.file_tracker.is_indexed(file_path=file_path):
-        #         print('file already exists')
-        #         return
-        #     else:
-        #         # file outdated, need to remove from both vector db and json
-        #         print(f"{file_path} has changed — re-indexing...")
-        #         self._delete_from_db(file_path)
         # Step 1: Check if already processed (by hash) --> checking if it is indexed by another users.
+        start = time.perf_counter()
+        logger.info("Started processing %s for user %s", original_file_name, user_id)
         if self._hash_exists_in_db(file_hash):
-            print(f"Found existing vectors (hash: {file_hash[:8]}...)")
+            logger.debug("Found existing vectors (hash: %s...)", file_hash[:8])
             return self._reuse_embeddings(file_hash, user_id, file_path, original_file_name)
         # Step 2: Process new file separately 
         # TODO: include _delete_db functionality incase the file is outdated
@@ -124,12 +116,13 @@ class FileSearch:
         elif file_path.endswith('.docx'):
             pages = self._extract_text_from_word(file_path)
         else:
-            print('Unsupported file type')
+            logger.error('Unsupported file type')
             return 0
-        return self._add_to_db(file_path, pages, user_id, file_hash, original_file_name)
+        chunk_count = self._add_to_db(file_path, pages, user_id, file_hash, original_file_name)
+        elapsed = time.perf_counter() - start
+        logger.info("Finished processing %s for user %s: chunks=%d time=%.3fs", original_file_name, user_id, chunk_count, elapsed)
+        return chunk_count
 
-        # add file info to json/ sqlite db
-        # self.file_tracker.add_file(file_path=file_path)
 
     def _hash_exists_in_db(self, file_hash: str) -> bool:
         """Check if file with this hash already exists"""
@@ -139,10 +132,11 @@ class FileSearch:
     def _reuse_embeddings(self, file_hash: str, user_id: str, file_path: str, original_file_name: str) -> int:
         """Reuse existing embeddings for a new user (DEDUPLICATION)"""
         # Get all chunks for the given file hash
+        start = time.perf_counter()
         results = self.collection.get(where={"file_hash": file_hash})
         if not len(results['ids']) > 0:
             return 0
-        print(f"Reusing {len(results['ids'])} chunks for user {user_id}")
+        logger.debug(f"Reusing {len(results['ids'])} chunks for user {user_id}")
         new_ids = []
         new_metadatas = []
         user_id_str = str(user_id)
@@ -170,7 +164,8 @@ class FileSearch:
                 metadatas=new_metadatas
             )
         chunk_count = len(new_ids)
-        print(f"Created {chunk_count} vectors for user {user_id}")
+        elapsed = time.perf_counter() - start
+        logger.debug("Created %d vectors for user %s (reused) time=%.3fs", chunk_count, user_id, elapsed)
         return chunk_count
 
     def _extract_text_from_pdf(self, file_path: str) -> list[PageEntry]:
@@ -199,7 +194,6 @@ class FileSearch:
         all_metadatas = []
         all_embeddings = []
         all_documents = []
-
         for page in pages:
 
             chunks = self.text_splitter.split_text(page.text)
@@ -229,7 +223,7 @@ class FileSearch:
             all_documents.extend(chunks)
             # for tracking
             # self.loaded_files[file_path] = len(chunks)
-            print(f"Indexed {len(chunks)} chunks from {page.page_num}")
+            # logger.debug("Indexed %d chunks from %s", len(chunks), page.page_num)
 
         # Add to Chroma (with metadata)
         # requires one list of IDs and one list of metadatas aligned with each document
@@ -241,6 +235,7 @@ class FileSearch:
                 embeddings=all_embeddings,
                 metadatas=all_metadatas
             )
+        logger.info("Finished indexing %s for user %s: chunks=%d", original_file_name, user_id, len(all_ids))
         return len(all_ids)  # return total chunks indexed for tracking
 
     def _extract_text_from_word(self, file_path: str) -> list[PageEntry]:
@@ -263,41 +258,36 @@ class FileSearch:
         """Return cached embedding if available."""
         search_key = search_key.lower()
         if search_key in self.embedding_cache:
+            logger.debug("Embedding cache hit for key=%s", search_key)
             return self.embedding_cache[search_key]
+        t0 = time.perf_counter()
         embedding = self.model.encode([search_key]).tolist()
         self.embedding_cache[search_key] = embedding
+        logger.debug("Computed embedding for key=%s time=%.0fms", search_key, (time.perf_counter()-t0)*1000)
         return embedding
         
     def __keyword_search(self, search_key:str, user_id: str) -> list:
         """Search for keyword in stored sentences."""
-        import time
-        t0 = time.time()
+        t0 = time.perf_counter()
         # step4: query
         query_embedding = self._get_embedding(search_key)
-        print(f"  embed: {(time.time()-t0)*1000:.0f}ms")
+        logger.debug("embed time=%.0fms", (time.perf_counter()-t0)*1000)
         # 7. Search in Chroma
-        t1 = time.time()
+        t1 = time.perf_counter()
         results = self.collection.query(
             query_embeddings=query_embedding,
             n_results=N_RESULTS, # return top 5
             where={"user_id": user_id}
         )
-        print(f"  chroma: {(time.time()-t1)*1000:.0f}ms")
+        logger.debug("chroma query time=%.0fms", (time.perf_counter()-t1)*1000)
         filtered_results = []
-        t2 = time.time()
+        t2 = time.perf_counter()
         # filtering response based on cosine similarity score
         for doc, score, meta in zip(results['documents'][0],results['distances'][0], results["metadatas"][0]):
             if score >= THRESHOLD:
                 filtered_results.append({"file": meta["file"], 'page': meta['page_num'], 'chunk': meta['chunk'], "score": score, "text": doc})
-        print(f"  filter: {(time.time()-t2)*1000:.0f}ms")   
+        logger.debug("filter time=%.0fms results=%d", (time.perf_counter()-t2)*1000, len(filtered_results))
         return filtered_results
-        
-    # def _file_already_loaded(self, file_name: str) -> bool:
-    #     # Return all documents whose metadata has a key file equal to <file_name>
-    #     results = self.collection.get(where={'file': file_name})
-    #     if len(results['ids']) > 0:
-    #         return True
-    #     return False
 
     def delete_from_db(self, file_hash:str, user_id: str) -> None:
         """ delete entries from vector db """
@@ -314,12 +304,12 @@ class FileSearch:
 
     def keyword_search(self, query: str, user_id: str) -> None:
         """Generate an answer from retrieved context using Ollama (RAG)"""
-        import time
-        t_start = time.time()
+        t_start = time.perf_counter()
         # Step 1: Get top semantic matches
         search_results = self.__keyword_search(query, user_id)
 
         if not search_results:
+            logger.warning(f"No relevant context found for query: '{query}' and user_id: {user_id}")
             return "No relevant context found in the indexed documents."
 
         # Step 2: Build the context from top chunks
@@ -340,13 +330,30 @@ class FileSearch:
         # # """
 
         # # Step 4: Call llm model
-        t3 = time.time()
-        # chat_completion = self.groq_client.chat.completions.create(
-        # messages=[
-        #     {"role": "system", "content": "You are a helpful assistant that answers based only on provided context. If the answer is not explicitly stated, say ‘Not found in the text.’"},
-        #     {'role': 'user', 'content': f'Context: \n {context}\n Question: {query} Answer with citations like: (File: X, Page: Y)'}], model=LLM_MODEL,)
-        
-        # Build numbered context
+        context = ''
+        for i, data in enumerate(search_results, 1):
+            context += f'[{i}] File: {data["file"]}, Page: {data["page"]}\n{data["text"]}\n\n'
+
+        chat_completion = self.groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that answers based only on provided context. If the answer is not explicitly stated, say ‘Not found in the text.’"},
+                {'role': 'user', 'content': f'Context: \n {context}\n Question: {query} Answer with citations like: (File: X, Page: Y)'}], model=LLM_MODEL,
+        )
+        elapsed = time.perf_counter() - t_start
+        logger.info("keyword_search completed: user=%s query_len=%d matches=%d time=%.3fs", user_id, len(query), len(search_results), elapsed)
+        return chat_completion.choices[0].message.content, search_results
+
+    def hybrid_retrieve(self, query: str, user_id: str) -> list:
+        """Perform hybrid retrieval (BM25 + semantic search) and return top results"""
+        return self._hybrid_retrieve(query, user_id)
+    
+    async def hybrid_generate_stream(self, query: str, search_results: list) -> any:
+        """Perform hybrid generate"""
+        if not search_results:
+            logger.warning(f"No relevant context found for query: '{query}'")
+            yield "No relevant context found in the indexed documents."
+            return
+        start = time.perf_counter()
         context = ''
         for i, data in enumerate(search_results, 1):
             context += f'[{i}] File: {data["file"]}, Page: {data["page"]}\n{data["text"]}\n\n'
@@ -355,45 +362,65 @@ class FileSearch:
             {
                 "role": "system",
                 "content": """You are a precise document assistant. Follow these rules strictly:
-
-        1. Answer ONLY using the provided context — never use outside knowledge
-        2. If the query is a topic or name (not a question), summarize what the context says about it
-        3. If the answer is not in the context, respond exactly: 'Not found in the provided documents.'
-        4. Keep answers concise — 3 to 5 sentences maximum
-        5. Always cite your sources inline as [File: X, Page: Y] immediately after each claim
-        6. Never speculate or infer beyond what is explicitly stated"""
+                1. Answer ONLY using the provided context — never use outside knowledge
+                2. If the query is a topic or name (not a question), summarize what the context says about it
+                3. If the answer is not in the context, respond exactly: 'Not found in the provided documents.'
+                4. Keep answers concise — 3 to 5 sentences maximum
+                5. Always cite your sources inline as [File: X, Page: Y] immediately after each claim
+                6. Never speculate or infer beyond what is explicitly stated"""
             },
             {
                 "role": "user",
                 "content": f"Context:\n{context}\nQuery: {query}"
             }
         ]
-        chat_completion = self.groq_client.chat.completions.create(messages=messages, model=LLM_MODEL, temperature=0.0, max_tokens=512)
-        print(f"  groq LLM: {(time.time()-t3)*1000:.0f}ms")
-        print(f"  total: {(time.time()-t_start)*1000:.0f}ms")
-        return chat_completion.choices[0].message.content, search_results
+        stream = await asyncio.wait_for(
+            self._async_client.chat.completions.create(messages=messages, temperature=0.0, model=LLM_MODEL, stream=True),
+            timeout=30
+        )
+        # normal for works with synchronous iterables
+        async for chunk in stream:
+            token = chunk.choices[0].delta.content
+            if token is not None and token != '':
+                yield token
+        elapsed = time.perf_counter() - start
+        logger.info("hybrid_generate_stream finished: query_len=%d matches=%d time=%.3fs", len(query), len(search_results), elapsed)
+    
 
     def hybrid_search(self, query: str, user_id: str) -> tuple:
         """Generate an answer from retrieved context using Ollama (RAG)"""
         # Step 1: Get top semantic matches
-        # print(f"Starting hybrid search for query: '{query}' and user_id: {user_id}")
+        start = time.perf_counter()
+        logger.info("Starting hybrid search for query: '%s' and user_id: %s", query, user_id)
         search_results = self._hybrid_retrieve(query, user_id)
-        # print(f"Hybrid retrieval returned {len(search_results)} results for query: '{query}' and user_id: {user_id}")
         if not search_results:
+            logger.warning(f"No relevant context found for query: '{query}'")
             return "No relevant context found in the indexed documents."
 
-        # Step 2: Build the context from top chunks
-        context = ''
-        for data in search_results:
-            context += f'File: {data['file']} | Page: {data['page']} \n{data['text']} \n'
-
         # Step 3: Call llm model
-        chat_completion = self.groq_client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant that answers based only on provided context. If the answer is not explicitly stated, say ‘Not found in the text.’"},
-            {'role': 'user', 'content': f'Context: \n {context}\n Question: {query} Answer with citations like: (File: X, Page: Y)'}],
-            model=LLM_MODEL
-            )
+        context = ''
+        for i, data in enumerate(search_results, 1):
+            context += f'[{i}] File: {data["file"]}, Page: {data["page"]}\n{data["text"]}\n\n'
+
+        messages = [
+            {
+                "role": "system",
+                "content": """You are a precise document assistant. Follow these rules strictly:
+                1. Answer ONLY using the provided context — never use outside knowledge
+                2. If the query is a topic or name (not a question), summarize what the context says about it
+                3. If the answer is not in the context, respond exactly: 'Not found in the provided documents.'
+                4. Keep answers concise — 3 to 5 sentences maximum
+                5. Always cite your sources inline as [File: X, Page: Y] immediately after each claim
+                6. Never speculate or infer beyond what is explicitly stated"""
+            },
+            {
+                "role": "user",
+                "content": f"Context:\n{context}\nQuery: {query}"
+            }
+        ]
+        chat_completion = self.groq_client.chat.completions.create(messages=messages, temperature=0.0, model=LLM_MODEL)
+        elapsed = time.perf_counter() - start
+        logger.info("hybrid_search completed: user=%s query_len=%d matches=%d time=%.3fs", user_id, len(query), len(search_results), elapsed)
         return chat_completion.choices[0].message.content, search_results
 
     def _rebuild_bm25_for_user(self, user_id: str) -> None:
@@ -443,9 +470,9 @@ class FileSearch:
         # chunk_4 wins — both systems agreed
         # chunk_9 is still included — semantic liked it even though BM25 didn't
         """
-        # print(f"Performing hybrid retrieval for query: '{query}' and user_id: {user_id}")
-        # bm25 
-
+        start = time.perf_counter()
+        logger.debug("Starting hybrid retrieval for query: %s", query)
+        # bm25
         fetch_k = top_k * 4  # fetch 40 if you want top 5 final results (ce output)
         query_tokens = query.lower().split()
 
@@ -502,15 +529,19 @@ class FileSearch:
                     'chunk': meta['chunk'],
                     "score": rrf_scores[id],
                     "text": doc
-                    }
-        )
+                }
+            )
         # cross encoder 10 -> 5
-        return self._rerank(query, rrf_results, top_k=5)
+        reranked = self._rerank(query, rrf_results, top_k=5)
+        elapsed = time.perf_counter() - start
+        logger.debug("Hybrid retrieve finished: query=%s returned=%d time=%.3fs", query, len(reranked), elapsed)
+        return reranked
 
     def _rerank(self, query: str, chunks: list[dict], top_k: int = 5) -> list[dict]:
         """Rerank chunks using CrossEncoder — call after RRF
         """
-        # print(f"Reranking {len(chunks)} chunks with CrossEncoder...")
+        start = time.perf_counter()
+        logger.debug("Reranking chunks with CrossEncoder... count=%d", len(chunks))
         if not chunks:
             return []
         # def trim(text: str, max_words: int = 350) -> str:
@@ -521,7 +552,6 @@ class FileSearch:
         pairs = [(query, chunk['text']) for chunk in chunks]
         # score all the pairs
         ce_scores = self.reranker.predict(pairs)
-        # print(f"CrossEncoder scores: {ce_scores}")
         # Attach ce score to each chunk
         for i in range(len(chunks)):
             chunks[i]['score'] = float(ce_scores[i])  # replaces original RRF score with CE score for final ranking, you can keep both if you want to analyze later
@@ -529,6 +559,8 @@ class FileSearch:
         #  direct questions → high scores, theme queries    → low scores 
         # reranked = [chunk for chunk in chunks if chunk['score'] >= CE_THRESHOLD]
         reranked =  sorted(chunks, key=lambda x: x['score'], reverse=True)[:top_k]
+        elapsed = time.perf_counter() - start
+        logger.debug("Rerank completed: returned=%d time=%.3fs", len(reranked), elapsed)
         return reranked
 
     # def list_files(self):
@@ -543,7 +575,7 @@ if __name__ == '__main__':
     # search.keyword_Search(search_key)
     user_id1 = 'fbe5a183-9583-4b1b-b03e-8bcf29b66e46'
     results = obj.hybrid_search('WHO IS sherlock holmes', user_id1)
-    print(results[0])
+
 
 
 
@@ -593,4 +625,26 @@ SSE: Server send Events:
 Normal API call:
   client request → server processes → single response
 
+"""
+
+""""
+Redis + celery
+FastAPI → sends task → Redis queue → Celery worker → executes task
+
+redis:: inmemory database (very fast). used as cache, message broker (task queue), temporary storage
+- use cases:: Session storage, Queue backend for Celery, Caching DB results
+- need to define redis broker url for celery to connect and use it as a message broker (task queue) for handling background tasks.
+- need to define redis backend url for celery to store task results. eg:: app = Celery('test', broker='redis://localhost:6379/0', backend='redis://localhost:6379/1')
+celery: a task manager, runs background jobs outside the API server (in a different process outside of API, so there by it cannot be used in live streaming use cases.)
+- Background worker system that executes jobs later
+- why used?
+-- Prevents blocking API requests (like sending emails, embedding docu, processing large files, Batch LLM calls, video processing )
+-- Handles long-running or heavy tasks
+-- Provides retries + reliability + scaling
+
+-When NOT to use Celery: Real-time streaming (LLM tokens, SSE, WebSockets), very small fast operations
+-when to use celery::
+-- Long-running tasks (>2–3 seconds)
+-- Heavy CPU/IO workloads
+-- Tasks that must survive crashes
 """

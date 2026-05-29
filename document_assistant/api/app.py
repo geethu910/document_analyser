@@ -12,15 +12,23 @@ from document_assistant.api.database import Base, create_db_and_tables
 from document_assistant.api.auth import auth_backend, auth_manager
 from document_assistant.api.schemas import UserCreate, UserRead, UserUpdate
 from document_assistant.api.routes import router
+from document_assistant import logger
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
     # Startup code - create database tables
-    await create_db_and_tables()
+    logger.info("Starting Document Assistant API startup tasks")
+    try:
+        await create_db_and_tables()
+        logger.info("Database and tables are ready")
+    except Exception:
+        logger.error("Error during startup", exc_info=True)
+        raise
     yield
-    # Shutdown code (if needed)
+    # Shutdown code
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -86,12 +94,11 @@ async def verify_page():
 # This tells fastapi : Any request to a path that doesn't match an API route
 # Check the static/ folder for a file with that name Serve it automatically
 static_dir = Path(__file__).parent.parent.parent / "static"
-print(f"Checking for static files in: {static_dir}")
 if static_dir.exists():
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
-    print("Static files mounted successfully")
+    logger.debug("Static files mounted successfully")
 else:
-    print(f"Warning: Static directory not found at {static_dir}. Static files will not be served.")
+    logger.info(f"Static directory not found at {static_dir}. Static files will not be served.")
 
 
 # @app.get("/")

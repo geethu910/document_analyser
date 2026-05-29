@@ -62,14 +62,6 @@ class SearchResponse(BaseModel):
     match_count: int = 0  # ✅ ADD: Number of relevant matches
 
 
-# class FileInfo(BaseModel):
-#     """File information"""
-#     file_name: str
-#     upload_time: datetime
-#     file_size: int
-#     status: str
-
-
 class UserFilesResponse(BaseModel):
     """List of files uploaded by user"""
     files: List[FileUploadResponse]

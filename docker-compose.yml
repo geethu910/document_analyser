@@ -1,15 +1,26 @@
 version: "3.8"
 
 services:
+  # api:
+  #   build: .
+  #   command: uvicorn document_assistant.api.app:app --host 0.0.0.0 --port 8000
+  #   ports:
+  #     - "8000:8000"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_started
+  #   restart: unless-stopped
   postgres:
     image: postgres:15-alpine
     container_name: rag_postgres
     env_file:
       - .env
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # environment:
+    #   POSTGRES_DB: ${POSTGRES_DB}
+    #   POSTGRES_USER: ${POSTGRES_USER}
+    #   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5432:5432" # HOST_PORT : CONTAINER_PORT
     volumes:
@@ -28,6 +39,14 @@ services:
       - "6379:6379"
     restart: unless-stopped
 
+  # worker:
+  #   build: .
+  #   command: celery -A document_assistant.tasks worker --loglevel=info
+  #   depends_on:
+  #     - redis
+  #     - postgres
+  #   restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant:v1.9.0   # pin version instead of latest
     container_name: rag_qdrant
@@ -37,10 +56,20 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped    # restart policy to ensure it stays up
 
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: rag_chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/path/to/chroma/storage
+    restart: unless-stopped
+
 
 volumes:  # define named volumes for data persistence
   postgres_data:
   qdrant_data:
+  chroma_data:
 
 # docker run: Start one container with these options
 # docker compose: Start multiple containers defined in this file with one command (docker compose up), -d means run in detached mode (in the background)

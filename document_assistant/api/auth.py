@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 # Import User model
 from document_assistant.api.database import User, get_user_db
+from document_assistant import logger
 
 load_dotenv()
 
@@ -39,7 +40,7 @@ EMAIL_FROM = os.getenv("EMAIL_FROM", "no-reply@example.com")  # the sender addre
 
 async def send_verification_email(email: str, token: str, request: Request):
     """Send verification email with token link"""
-    print('invoking send_verification_email with:', email, token)
+    logger.info('Preparing to send verification email...')
     # verification_link = f"{request.base_url}api/auth/verify?token={token}"
     # Link goes to /verify (static file), not /api/auth/verify (API endpoint)
     verification_link = f"{request.base_url}verify?token={token}"
@@ -72,9 +73,9 @@ async def send_verification_email(email: str, token: str, request: Request):
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.sendmail(EMAIL_FROM, email, message.as_string())
-        print(f"Verification email sent to {email}")
+        logger.info("Verification email sent to the user")
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        logger.error(f"Failed to send email: {e}")
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     """User manager for FastAPI-Users with UUID support"""
@@ -82,18 +83,18 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     verification_token_secret = SECRET_KEY
 
     async def on_after_register(self, user: User, request: Optional[Request] = None):
-        print(f"User registered: {user.email}")
+        logger.info(f"User registered")
 
     async def on_after_forgot_password(self, user: User, request: Optional[Request] = None):
-        print(f"User {user.email} has forgot their password.")
-    
+        logger.info(f"User {user.id} forgot their password.")
+
     async def on_after_verify(self, user: User, request: Optional[Request] = None):
-        print(f"User verified: {user.email}")
-    
+        logger.info(f"User {user.id} verified.")
+
     async def on_after_request_verify(
         self, user: User, token: str, request: Optional[Request] = None
     ):
-        print(f"Verification requested for user {user.id}. Verification token: {token}")
+        logger.info(f"Verification requested for user {user.id}")
         await send_verification_email(user.email, token, request)
 
 # Configure Bearer transport
