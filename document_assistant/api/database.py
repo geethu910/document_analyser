@@ -15,14 +15,15 @@ from sqlalchemy.orm import DeclarativeBase, relationship
 from fastapi import Depends
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase, SQLAlchemyBaseUserTableUUID
 
-# ✅ Create results directory if it doesn't exist
-RESULTS_DIR = Path("./results")
-RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Database URL - use async driver
 # DB_URL = os.getenv('DATABASE_URL', 'sqlite+aiosqlite:///./results/app_db.sqlite')
-DB_URL = os.getenv('DATABASE_URL', 'postgresql+asyncpg://doc_analyser_user:doc_analyser_password@localhost:5432/doc_analyser_db')
-
+DB_URL = (
+    f"postgresql+asyncpg://"
+    f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
+    f"@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', 5432)}"
+    f"/{os.getenv('DB_NAME')}"
+)
 # Create async engine
 engine = create_async_engine(
     DB_URL,

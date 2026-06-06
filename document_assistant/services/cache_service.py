@@ -5,8 +5,8 @@ import os
 import time
 from document_assistant import logger
 
-
-redis_client = Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+redis_url = f'redis://{os.getenv("REDIS_HOST", "localhost")}:{os.getenv("REDIS_PORT", 6379)}'
+redis_client = Redis.from_url(redis_url, decode_responses=True)
 
 
 async def get_cached_search(query: str, user_id: int):

@@ -26,13 +26,12 @@ import time
 THRESHOLD = 0.3 # 0.3–0.5
 N_RESULTS = 5
 CE_THRESHOLD = 0.1
-DB_PATH = 'results/chroma_db'
 
-load_dotenv()
+load_dotenv()  # # only does something if .env exists (local dev)
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 LLM_MODEL = os.getenv('LLM_MODEL', '')
 EMBED_MODEL = os.getenv('EMBED_MODEL', '')
-
+CROSS_ENCODER_MODEL = os.getenv('CROSS_ENCODER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2')
 
 @dataclass
 class PageEntry:
@@ -41,7 +40,6 @@ class PageEntry:
 
 @dataclass
 class DocMetadata:
-    # metadatas.append({"file": os.path.basename(file_path), "chunk": i, "page_num": page.page_num})
     file: str
     chunk: int
     page_num: int
@@ -55,7 +53,7 @@ class FileSearch:
     def __new__(cls):
         if cls._instance is None:
             # below lock is required in the case of multithreaded environment, Two threads could reach the if cls._instance is None: line at the same time before any of them assigns to _instance
-            # we need to synchronize the critical section where _instance is being created.
+            # need to synchronize the critical section where _instance is being created.
             with cls._lock: 
                 if cls._instance is None:     # <-- Check again inside lock
                     cls._instance = super().__new__(cls)
@@ -66,10 +64,9 @@ class FileSearch:
             return # prevent re-init (singleton) --> only one chroma connection open, avoids recreating collection.
         # self.loaded_files: dict = {}
         self.embedding_cache: dict = {}
-        # 1. Start Chroma client (in-memory DB)
-        # chroma_client = chromadb.Client()
+        # 1. Start Chroma client
         # persistant client:
-        chroma_client = chromadb.PersistentClient(path=DB_PATH)
+        chroma_client = chromadb.HttpClient(host=os.getenv('CHROMA_HOST', 'localhost'), port=int(os.getenv('CHROMA_PORT', 8000)))
         # 2. Create a collection if doesn't exists
         # "l2" → Euclidean distance, "ip" → Inner Product (works like similarity, higher = better), "cosine" → Cosine distance (lower = better)
         self.collection = chroma_client.get_or_create_collection(name="docs", metadata={"hnsw:space": "ip"})
@@ -96,7 +93,7 @@ class FileSearch:
         self.bm25_indexes: dict = {}   # { user_id: BM25Okapi }
         self.bm25_chunks: dict = {}    # { user_id: [chunk texts] }
         self.bm25_ids: dict = {}       # { user_id: [chunk ids] }
-        self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', activation_fn=torch.nn.Sigmoid()) # chunks are 600 token, 110 token got truncated
+        self.reranker = CrossEncoder(CROSS_ENCODER_MODEL, activation_fn=torch.nn.Sigmoid()) # chunks are 600 token, 110 token got truncated
         self._initialized = True # mark as initialized, this is done to prevent re initialisation of the same object (we already make it as singleton via means of overriding __new__)
 
     def load_file(self, file_path: str, user_id: str, file_hash: str, original_file_name: str) -> int:
@@ -310,7 +307,7 @@ class FileSearch:
 
         if not search_results:
             logger.warning(f"No relevant context found for query: '{query}' and user_id: {user_id}")
-            return "No relevant context found in the indexed documents."
+            return "No relevant context found in the indexed documents.", []
 
         # Step 2: Build the context from top chunks
         # context = '\n\n'.join(data['text'] for data in search_results)
@@ -351,7 +348,7 @@ class FileSearch:
         """Perform hybrid generate"""
         if not search_results:
             logger.warning(f"No relevant context found for query: '{query}'")
-            yield "No relevant context found in the indexed documents."
+            yield "No relevant context found in the indexed documents.", []
             return
         start = time.perf_counter()
         context = ''
@@ -395,7 +392,7 @@ class FileSearch:
         search_results = self._hybrid_retrieve(query, user_id)
         if not search_results:
             logger.warning(f"No relevant context found for query: '{query}'")
-            return "No relevant context found in the indexed documents."
+            return "No relevant context found in the indexed documents.", []
 
         # Step 3: Call llm model
         context = ''

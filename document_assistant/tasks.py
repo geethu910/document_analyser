@@ -8,14 +8,23 @@ from document_assistant.api.database import UploadedFile
 from document_assistant import logger
 import time
 
-DB_URL = os.getenv('SYNC_DATABASE_URL', 'postgresql://doc_analyser_user:doc_analyser_password@localhost:5432/doc_analyser_db')
+
+DB_URL = (
+    f"postgresql://"
+    f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
+    f"@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', 5432)}"
+    f"/{os.getenv('DB_NAME')}"
+)
 
 engine = create_engine(DB_URL)
-SessionLocal = sessionmaker( bind=engine, autocommit=False, autoflush=False )
+session_local = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+redis_url = f'redis://{os.getenv("REDIS_HOST", "localhost")}:{os.getenv("REDIS_PORT", 6379)}'
+
 app = Celery(
     "worker",
-    broker="redis://localhost:6379/0",
-    backend="redis://localhost:6379/1"
+    broker=f"{redis_url}/0",
+    backend=f"{redis_url}/1"
 )
 # File search lazy loading (singleton)
 _file_search_instance: None = None
@@ -44,7 +53,7 @@ def process_file_task(
     file_hash: str,
     original_file_name: str
 ):  
-    db = SessionLocal()
+    db = session_local()
     try:
         start = time.perf_counter()
         logger.info("Celery task start: process_file task user=%s file=%s", user_id, original_file_name)
@@ -77,3 +86,4 @@ def process_file_task(
         raise
     finally:
         db.close()
+        os.remove(temp_file_path)    # cleanup after processing

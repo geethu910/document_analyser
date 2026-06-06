@@ -25,7 +25,7 @@ from document_assistant import logger
 load_dotenv()
 
 # Security constants
-SECRET_KEY = os.getenv('SECRET_KEY', 'sakjdhkjad872323') # used to sign jwt tokens and verification/ reset tokens. must be random secret
+SECRET_KEY = os.getenv('SECRET_KEY', '') # used to sign jwt tokens and verification/ reset tokens. must be random secret
 # can be created using:: python -c "import secrets; print(secrets.token_urlsafe(32))" or openssl rand -hex 32
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com") # smtp server hostname used to send emails.
 # eg: smtp.gmail.com for Gmail, or your own SMTP server if you have one. This is used for sending verification emails and password reset emails to users.

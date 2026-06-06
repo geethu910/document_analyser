@@ -1,0 +1,114 @@
+# version: "3.8"
+
+services:
+  api:
+    build: .
+    command: uvicorn document_assistant.api.app:app --host 0.0.0.0 --port 8000
+    environment:
+      CHROMA_HOST: chroma  # fixed, resolves to the chroma service inside Docker network
+      CHROMA_PORT: 8000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}  # these should be set in a .env file or shell environment before running
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      LLM_MODEL: ${LLM_MODEL}
+      EMBED_MODEL: ${EMBED_MODEL}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_USER: ${SMTP_USER}
+      EMAIL_FROM: ${EMAIL_FROM}
+      SECRET_KEY: ${SECRET_KEY}
+      CROSS_ENCODER_MODEL: ${CROSS_ENCODER_MODEL}
+    
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      chroma:
+        condition: service_started
+    restart: unless-stopped
+    volumes:
+      - uploads:/app/uploads  # persist uploaded files to host
+  postgres:
+    image: postgres:15-alpine
+    container_name: rag_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432" # HOST_PORT : CONTAINER_PORT
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:  # add healthcheck to ensure Postgres is ready before other services depend on it
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME} || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped # If the container crashes or exits, start it again.
+
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    
+
+  worker:
+    build: .
+    command: celery -A document_assistant.tasks worker --loglevel=info
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      # chroma service
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      # postgres service
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}  # these should be set in a .env file or shell environment before running
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      EMBED_MODEL: ${EMBED_MODEL}
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      - redis
+      - postgres
+      - chroma
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.0 
+    container_name: rag_qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped    # restart policy to ensure it stays up
+
+  chroma:
+    image: chromadb/chroma:1.5.9
+    container_name: rag_chroma
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/data   # <-- persist chroma server storage to host
+    restart: unless-stopped
+
+
+volumes:  # define named volumes for data persistence
+  postgres_data:
+  qdrant_data:
+  chroma_data:
+  uploads:  # volume for uploaded files

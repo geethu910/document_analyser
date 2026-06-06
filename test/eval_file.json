@@ -1,10 +1,108 @@
 [
-  {"query": "Who hires Sherlock Holmes in A Scandal in Bohemia?",
-   "expected_answer": "The King of Bohemia"},
+  {
+    "question": "What is the purpose of indentation in Python?",
+    "ground_truth": "Indentation in Python defines code blocks. Unlike many languages that use braces, Python relies on consistent indentation to indicate scope, such as inside functions, loops, and conditionals.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How do you declare a variable in Python?",
+    "ground_truth": "Variables in Python are declared by simply assigning a value to a name using the equals sign. Python is dynamically typed, so no explicit type declaration is needed.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "What is the difference between a list and a tuple?",
+    "ground_truth": "Lists are mutable sequences, meaning their contents can be changed after creation. Tuples are immutable, so once defined, their elements cannot be modified.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How does Python handle functions?",
+    "ground_truth": "Functions in Python are defined using the def keyword. They can take parameters, return values, and support default arguments, keyword arguments, and variable-length arguments.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "What is the role of the __init__ method in classes?",
+    "ground_truth": "The __init__ method is the constructor in Python classes. It initializes object attributes when a new instance of the class is created.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How does Python manage exceptions?",
+    "ground_truth": "Python uses try-except blocks to handle exceptions. Code inside try is executed, and if an error occurs, the except block catches and handles it.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "What is the difference between Python modules and packages?",
+    "ground_truth": "A module is a single Python file containing code, while a package is a collection of modules organized in directories with an __init__.py file.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How does Python support file handling?",
+    "ground_truth": "Python provides built-in functions like open(), read(), write(), and close() to handle files. Files can be opened in different modes such as read, write, and append.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "Why did Charlotte Lucas marry Mr Collins?",
+    "ground_truth": "Charlotte married Mr Collins for financial security and social stability rather than love. As a woman of limited means and prospects, she viewed marriage as a practical necessity.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "What is Mr Darcy's first impression of Elizabeth Bennet?",
+    "ground_truth": "Mr Darcy initially finds Elizabeth tolerable but not handsome enough to tempt him. He considers her beneath his social standing and shows little interest at the first ball.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "Why does Elizabeth refuse Mr Darcy's first proposal?",
+    "ground_truth": "Elizabeth refuses because of Darcy's arrogant manner, his role in separating Jane and Bingley, and Wickham's claims about Darcy's mistreatment of him.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "What role does Mrs Bennet play in the novel?",
+    "ground_truth": "Mrs Bennet's primary goal is to see her daughters married to wealthy men. Her nervous, scheming nature often embarrasses the family and complicates her daughters' prospects.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "How does Lydia's elopement affect the Bennet family?",
+    "ground_truth": "Lydia's elopement with Wickham threatens the reputation and social standing of the entire Bennet family. It is only resolved when Darcy secretly pays Wickham to marry Lydia.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "Who is Irene Adler to Sherlock Holmes?",
+    "ground_truth": "Irene Adler is the only woman Holmes ever truly respected. He refers to her simply as the woman and she outwitted him in A Scandal in Bohemia by hiding the photograph he sought.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "What method does Holmes use to deduce facts about people?",
+    "ground_truth": "Holmes observes small details such as posture, clothing, calluses, and stains to make deductions. He calls this method the observation of trifles.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "What happened to Hosmer Angel in A Case of Identity?",
+    "ground_truth": "Hosmer Angel disappeared on the morning of his wedding to Mary Sutherland. Holmes deduced that Angel was actually her stepfather Mr Windibank in disguise, who invented the engagement to keep Mary's income at home.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "What is the relationship between Holmes and Watson?",
+    "ground_truth": "Watson is Holmes's close friend, companion and chronicler. He lives with Holmes at Baker Street and accompanies him on cases, recording and publishing the stories of Holmes's investigations.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "How does Holmes describe his own approach to detective work?",
+    "ground_truth": "Holmes says it is his business to know what other people do not know. He relies on logic, observation, and deduction rather than intuition or guesswork.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "Give an example of a woman who uses intelligence to overcome social constraints",
+    "ground_truth": "Elizabeth Bennet in Pride and Prejudice uses her wit and moral clarity to resist social pressure and eventually marry for love. Irene Adler in the Sherlock Holmes stories uses her intelligence to outwit Holmes himself.",
+    "source_file": "both"
+  },
+  {
+    "question": "How does social class affect the characters' choices in the stories?",
+    "ground_truth": "In Pride and Prejudice social class determines marriage prospects and social standing. In the Holmes stories class affects who can access justice and how crimes are investigated.",
+    "source_file": "both"
+  },
+  {
+    "question": "Describe a character who misjudges another person initially",
+    "ground_truth": "Darcy initially misjudges Elizabeth as socially inferior. Holmes misjudges Irene Adler as an adversary he can easily outmaneuver.",
+    "source_file": "both"
+  }
 
-  {"query": "Who arrests criminals in most cases?",
-   "expected_answer": "Inspector Lestrade"},
-  
-  {"query": "What is Holmes’ profession?",
-   "expected_answer": "Consulting detective"}
 ]

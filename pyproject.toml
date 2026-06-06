@@ -55,9 +55,12 @@ black = "^24.1.0"
 flake8 = "^7.0.0"
 mypy = "^1.8.0"
 isort = "^5.13.0"
+ragas = "^0.4"
 
 [build-system]
 requires = ["poetry-core"]
+Dataset = "^4.8"
+
 build-backend = "poetry.core.masonry.api"
 
 [tool.black]

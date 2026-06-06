@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
@@ -20,12 +20,22 @@ ENV POETRY_VENV_IN_PROJECT=false \
 # Copy dependency files first (for caching)
 COPY pyproject.toml poetry.lock* ./
 
-# Install dependencies
-RUN poetry install
-
 # Copy application code
 COPY document_assistant/ ./document_assistant/
-COPY .env .env
+
+# Install dependencies
+RUN poetry install --only main
+
+# create user
+RUN useradd -r -m appuser && \
+    chown -R appuser:appuser /app
+
+# Create uploads directory and set ownership
+RUN mkdir -p /app/uploads && chown -R appuser:appuser /app/uploads
+
+# Switch to non-root user
+USER appuser
+
 
 EXPOSE 8000
 

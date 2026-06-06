@@ -28,6 +28,7 @@ from document_assistant.services.cache_service import *
 from document_assistant.tasks import process_file_task
 from document_assistant import logger
 
+BASE_UPLOAD_DIRECTORY = '/app/uploads'
 # Router
 router = APIRouter()
 
@@ -297,7 +298,7 @@ async def search_documents(
         # check cache
         cached = await get_cached_search(query, current_user.id)
         if cached:
-            logger.debug('########### cache hit')
+            logger.debug('cache hit')
             search_record = SearchHistory(
                 user_id = current_user.id,
                 query = query,
@@ -344,7 +345,7 @@ async def search_documents(
             "matches": matches,
             "match_count": len(matches)
         }
-        logger.debug('###### cache miss:: adding to db')
+        logger.debug('cache miss:: adding to db')
         await cache_search(query, current_user.id, response_payload)
         elapsed = time.perf_counter() - start
         logger.info("Search: user=%s query_len=%d matches=%d time=%.3fs cache_miss=True", current_user.id, len(query), len(matches), elapsed)
@@ -371,12 +372,6 @@ async def get_search_history(
 ):
     """Get search history for current user"""
     try:
-        """
-         result = await session.execute(
-                select(UploadedFile).where(UploadedFile.id == file_uuid, UploadedFile.user_id == current_user.id))
-
-        db_file = result.scalars().first()
-        """
         search_result = await session.execute(
             select(SearchHistory).where(SearchHistory.user_id == current_user.id)
             .order_by(SearchHistory.search_time.desc()).limit(limit))
@@ -564,7 +559,7 @@ async def stream_search(
                 "matches": matches,
                 "match_count": len(matches)
             }
-            # await cache_search(query, current_user.id, response_payload)
+            await cache_search(query, current_user.id, response_payload)
 
             # Step 5 — send completion signal with search_id
             elapsed = time.perf_counter() - start
@@ -607,7 +602,7 @@ async def hybrid_upload(
             )
         file_ext = Path(file.filename).suffix.lower()
         # Step 2: Create temp file and stream upload
-        base_dir = f"./uploads/{current_user.id}"
+        base_dir = os.path.join(BASE_UPLOAD_DIRECTORY, str(current_user.id))
         os.makedirs(base_dir, exist_ok=True)
         temp_path = os.path.join(base_dir, f"{uuid.uuid4()}.tmp")
         # Stream file in chunks (4KB at a time)
