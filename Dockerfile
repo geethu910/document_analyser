@@ -23,6 +23,9 @@ COPY pyproject.toml poetry.lock* ./
 # Copy application code
 COPY document_assistant/ ./document_assistant/
 
+# copy static files if any
+COPY static/ ./static/
+
 # Install dependencies
 RUN poetry install --only main
 
