@@ -1,32 +1,53 @@
-version: "3.8"
 
 services:
-  # api:
-  #   build: .
-  #   command: uvicorn document_assistant.api.app:app --host 0.0.0.0 --port 8000
-  #   ports:
-  #     - "8000:8000"
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_started
-  #   restart: unless-stopped
+  api:
+    build: .
+    command: uvicorn document_assistant.api.app:app --host 0.0.0.0 --port 8000
+    environment:
+      CHROMA_HOST: chroma  # fixed, resolves to the chroma service inside Docker network
+      CHROMA_PORT: 8000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}  # these should be set in a .env file or shell environment before running
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      LLM_MODEL: ${LLM_MODEL}
+      EMBED_MODEL: ${EMBED_MODEL}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_USER: ${SMTP_USER}
+      EMAIL_FROM: ${EMAIL_FROM}
+      SECRET_KEY: ${SECRET_KEY}
+      CROSS_ENCODER_MODEL: ${CROSS_ENCODER_MODEL}
+    
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      chroma:
+        condition: service_started
+    restart: unless-stopped
+    volumes:
+      - uploads:/app/uploads  # persist uploaded files to host
   postgres:
     image: postgres:15-alpine
     container_name: rag_postgres
-    env_file:
-      - .env
-    # environment:
-    #   POSTGRES_DB: ${POSTGRES_DB}
-    #   POSTGRES_USER: ${POSTGRES_USER}
-    #   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5432:5432" # HOST_PORT : CONTAINER_PORT
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:  # add healthcheck to ensure Postgres is ready before other services depend on it
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME} || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -38,17 +59,35 @@ services:
     ports:
       - "6379:6379"
     restart: unless-stopped
-
-  # worker:
-  #   build: .
-  #   command: celery -A document_assistant.tasks worker --loglevel=info
-  #   depends_on:
-  #     - redis
-  #     - postgres
-  #   restart: unless-stopped
+    
+  worker:
+    build: .
+    command: celery -A document_assistant.tasks worker --loglevel=info
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      # chroma service
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      # postgres service
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}  # these should be set in a .env file or shell environment before running
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      EMBED_MODEL: ${EMBED_MODEL}
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      - redis
+      - postgres
+      - chroma
+    restart: unless-stopped
 
   qdrant:
-    image: qdrant/qdrant:v1.9.0   # pin version instead of latest
+    image: qdrant/qdrant:v1.9.0 
     container_name: rag_qdrant
     ports:
       - "6333:6333"
@@ -57,12 +96,12 @@ services:
     restart: unless-stopped    # restart policy to ensure it stays up
 
   chroma:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:1.5.9
     container_name: rag_chroma
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
-      - chroma_data:/path/to/chroma/storage
+      - chroma_data:/data   # <-- persist chroma server storage to host
     restart: unless-stopped
 
 
@@ -70,6 +109,8 @@ volumes:  # define named volumes for data persistence
   postgres_data:
   qdrant_data:
   chroma_data:
+  uploads:  # volume for uploaded files
+
 
 # docker run: Start one container with these options
 # docker compose: Start multiple containers defined in this file with one command (docker compose up), -d means run in detached mode (in the background)
@@ -81,6 +122,7 @@ volumes:  # define named volumes for data persistence
 #   # # if specified: build: . --> Docker will build an image from your Dockerfile
 #   # # 
 #   # Reuse existing volumes automatically
+# docker compose build  :: # builds all services with build: key
 
 # docker compose down: Stop and remove all containers defined in the docker-compose.yml file,
 #   # doesnot delete volumes
@@ -112,3 +154,42 @@ volumes:  # define named volumes for data persistence
 #     depends_on:
 #       postgres:
 #         condition: service_healthy
+# connect to aother container using service name as hostname, e.g., postgres:5432, not localhost:5432,
+# provided if you are connecting from the same docker compose network (e.g., from api to postgres).
+# If you are connecting from outside docker (e.g., from host machine to postgres), then use localhost:5432 and ensure the port is exposed in docker-compose.yml (e.g., "5432:5432")
+
+# How to pass env vars to docker containers:
+# 1. Using env_file in docker-compose.yml - for dev environment
+#   env_file:
+#     - .env
+# 2. Using shell environment in docker-compose.yml - for simple key-value pairs
+#   # Here platform/CI/ github actions will set these env vars in the shell before running docker compose up
+# 3. Pass environment file explicitly at runtime
+#   # docker compose --env-file .env.production up -d
+# GitHub actions: push code -> build and push docker image to registry (dockerhub) -> pull and run the image in production environment (e.g., AWS, Azure, GCP)
+# CI : push code -> github actions -> build docker image -> run tests -> done
+# CD : push code -> github actions -> build docker image -> run tests -> if tests pass, deploy to production (e.g., AWS, Azure, GCP) -> run the image in production environment(docker compose up -d)
+
+# sudo docker compose -f docker-compose_prod.yml up --build  --> both build and up in one command, but it will rebuild all services every time, even if there are no changes. So it's better to run build and up separately for faster iteration during development. In production, you can use --build to ensure you are always running the latest code.
+# http://127.0.0.1:8000/verify?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMTBiYTQwZi01OTk1LTQ2NjUtYjFhOS0yZjk3NWQzMGJmMTAiLCJlbWFpbCI6Imd0azNAbWFpbGluYXRvci5jb20iLCJhdWQiOiJmYXN0YXBpLXVzZXJzOnZlcmlmeSIsImV4cCI6MTc4MDY1MDQxMX0.B1NpydkdkCsmvhW0cyb_pgJmisSU3e4Jcb90Zvc1x3c
+ 
+ # Host bind mount (./uploads:/app/uploads) vs Named volume (uploads:/app/uploads):
+  # Host bind mount:
+    # Maps a directory on the host machine (./uploads) to a directory in the container (/app/uploads)
+    # Changes in the host directory are immediately reflected in the container and vice versa
+    # Useful for development when you want to see changes in real-time or persist data on the host
+    # Can lead to permission issues and is less portable across different environments
+  # Named volume:
+    # Managed by Docker and stored in Docker's storage area (not directly accessible on the host)
+    # Provides data persistence across container restarts and recreations
+    # More portable and avoids permission issues since Docker manages the volume
+    # Useful for production environments where you want to ensure data persistence without relying on host directory structure
+
+# Nginx and reverse proxy:
+  # Nginx is a web server that can also be used as a reverse proxy to route incoming requests to different backend services based on URL patterns, load balance traffic, and handle SSL termination.
+  # A reverse proxy is a service that sits in front of your backend apps (like your api container). Instead of clients hitting your API directly, they hit Nginx first. Nginx then forwards the request internally to your API service.
+  # why use:
+  #  # security: You don’t expose your database or internal services to the outside world. Only Nginx is exposed.
+  #  # Routing: Nginx can handle multiple apps on one server
+  #   # Load balancing: It can distribute traffic across multiple API containers.
+  #  # SSL termination: Nginx can handle HTTPS and forward requests to your API over HTTP, simplifying your API configuration.
