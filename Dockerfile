@@ -20,6 +20,9 @@ ENV POETRY_VENV_IN_PROJECT=false \
 # Copy dependency files first (for caching)
 COPY pyproject.toml poetry.lock* ./
 
+# copy readme
+COPY README.md ./
+
 # Copy application code
 COPY document_assistant/ ./document_assistant/
 
