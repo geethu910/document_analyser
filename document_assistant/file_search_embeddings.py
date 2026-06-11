@@ -8,7 +8,7 @@ from groq import Groq, AsyncGroq # hosted open-model provider
 import threading
 from dotenv import load_dotenv
 from docx import Document # pip install python-docx
-from sklearn.metrics.pairwise import cosine_similarity
+# from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from document_assistant import logger

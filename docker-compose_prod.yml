@@ -1,6 +1,6 @@
 services:
   api:
-    build: .
+    image: ghcr.io/geethu910/document-analyser-api:latest
     command: uvicorn document_assistant.api.app:app --host 0.0.0.0 --port 8000
     environment:
       CHROMA_HOST: chroma  # fixed, resolves to the chroma service inside Docker network
@@ -56,7 +56,7 @@ services:
     
 
   worker:
-    build: .
+    image: ghcr.io/geethu910/document-analyser-api:latest
     command: celery -A document_assistant.tasks worker --loglevel=info
     environment:
       REDIS_HOST: redis
