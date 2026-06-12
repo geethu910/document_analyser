@@ -1,6 +1,6 @@
 services:
   api:
-    image: ghcr.io/geethu910/document-analyser-api:latest
+    image: ghcr.io/geethu910/document-analyser-api:0.1
     command: uvicorn document_assistant.api.app:app --host 0.0.0.0 --port 8000
     environment:
       CHROMA_HOST: chroma  # fixed, resolves to the chroma service inside Docker network
@@ -56,7 +56,7 @@ services:
     
 
   worker:
-    image: ghcr.io/geethu910/document-analyser-api:latest
+    image: ghcr.io/geethu910/document-analyser-api:0.1
     command: celery -A document_assistant.tasks worker --loglevel=info
     environment:
       REDIS_HOST: redis
@@ -99,10 +99,10 @@ services:
     image: nginx:alpine
     container_name: rag_nginx
     ports:  # expose nginx on standard HTTP/HTTPS ports
-      # - "80:80"
-      # - "443:443"
-      - "8080:80"      # host 8080 → nginx container 80
-      - "8443:443"     # host 8443 → nginx container 443
+      - "80:80"
+      - "443:443"
+      # - "8080:80"      # host 8080 → nginx container 80
+      # - "8443:443"     # host 8443 → nginx container 443
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       # - ./certs:/etc/nginx/certs:ro

@@ -43,7 +43,8 @@ async def send_verification_email(email: str, token: str, request: Request):
     logger.info('Preparing to send verification email...')
     # verification_link = f"{request.base_url}api/auth/verify?token={token}"
     # Link goes to /verify (static file), not /api/auth/verify (API endpoint)
-    verification_link = f"{request.base_url}verify?token={token}"
+    base_url = os.getenv("APP_BASE_URL", str(request.base_url))
+    verification_link = f"{base_url}verify?token={token}"
     message = MIMEMultipart("alternative")
     message["Subject"] = "Verify your email"
     message["From"] = EMAIL_FROM
