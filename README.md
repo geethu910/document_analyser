@@ -50,11 +50,9 @@ API will be available at `http://localhost:8080/docs`.
 |---|---|---|
 | POST | `/api/auth/register` | Register a new user |
 | POST | `/api/auth/login` | Log in and receive a JWT |
-
 | POST | `/api/files/hybrid_upload` | Upload a document, indexing happens async via celery |
 | GET | `/api/files/list` | List uploaded documents |
 | DELETE | `/api/files/{file_id}` | Delete a document |
-
 | POST | `/api/hybrid_search` | hybrid search((BM25 + semantic + RRF + CrossEncoder)) |
 | POST | `/api/search` | Semantic-only search (baseline) |
 | POST | `/api/search/stream` | hybrid search with streamed answer |
