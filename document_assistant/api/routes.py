@@ -13,6 +13,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from fastapi import Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -674,17 +675,36 @@ async def hybrid_upload(
             vector_count= 0
         )
         session.add(new_file)
-        await session.commit()  # Commit the transaction to save the file metadata in the database
+        try:
+            await session.commit()  # Commit the transaction to save the file metadata in the database
+
+        except IntegrityError as e:
+            # concurrent request already inserted this (user_id, file_hash) — race lost, not an error
+            await session.rollback()
+            raise HTTPException(status_code=409, detail='This file is alredy being uploaded')
+        
         await session.refresh(new_file)
 
         # Process the uploaded file and add to vector database as a background task using celery.
-        task = process_file_task.delay(
-            temp_file_path=final_path,  # passing persistant file path 
-            user_id=str(current_user.id),
-            file_hash=file_hash,
-            original_file_name=file.filename
-        )
-        # TODO: may also add task.id to database
+        try:
+            task = process_file_task.delay(
+                temp_file_path=final_path,  # passing persistant file path 
+                user_id=str(current_user.id),
+                file_hash=file_hash,
+                original_file_name=file.filename
+            )
+        except Exception as e:
+            logger.error("Failed to enqueue processing task for %s: %s", file.filename, e, exc_info=True)
+            new_file.status = "failed"
+            await session.commit()
+            for path in [temp_path, final_path]:    # clean up files
+                if path and os.path.exists(path):
+                    os.unlink(path)
+            raise HTTPException(status_code=503, detail="Upload accepted but processing queue is unavailable. Please retry.")
+
+        # may also add task.id to database
+        new_file.celery_task_id = task.id
+        
         # increment cache version of user inorder to exclude stale versions
         await invalidate_user_cache(current_user.id)
         elapsed = time.perf_counter() - start
