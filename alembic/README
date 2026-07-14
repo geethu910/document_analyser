@@ -1,0 +1,29 @@
+Generic single-database configuration.
+initialisw alembic:
+    alembic init alembic
+confifure database connection::
+    modify env.py --> set SQLAlchemy url (Ensure it matches your FastAPI/SQLAlchemy connection string)
+Make model changes
+Generate migration script::
+    Create a migration that reflects your model changes.
+    alembic revision --autogenerate -m "my changes"
+    Alembic compares models vs. DB schema, Produces a migration file with ALTER TABLE commands
+Apply migration::
+    upgrasde database schema:
+    alembic upgrade head
+    - This will execute migration script
+    - adds new colums / constraints and so on
+    - Keeps schema version history for rollback if needed
+
+To undo the most recent migrationL
+    alembic downgrade -1
+Go back to the specific revision ID:
+    alembic downgrade <revison_id>
+Reset to base:
+    alembic downgrade base
+
+Things to consider:
+    adding a new colum, do existing rows need a default?
+    Adding unique constraint --> do duplicates exist?
+    changing types --> will exisitng values fit in the new type
+    

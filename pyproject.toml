@@ -28,6 +28,7 @@ sqlalchemy = {extras = ["asyncio"], version = "^2.0.0"}
 python-dotenv = "^1.1.0"
 asyncpg = "*" 
 redis = "^7.4"
+alembic = "^1.18"
 
 # Document Processing
 pymupdf = "^1.26.0"
