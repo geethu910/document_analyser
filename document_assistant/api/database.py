@@ -8,7 +8,7 @@ from uuid import uuid4
 from datetime import datetime
 from typing import AsyncGenerator
 
-from sqlalchemy import Column, String, DateTime, Boolean, Integer, ForeignKey, Text
+from sqlalchemy import Column, String, DateTime, Boolean, Integer, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -20,6 +20,14 @@ from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase, SQLAlchemyBaseUs
 # DB_URL = os.getenv('DATABASE_URL', 'sqlite+aiosqlite:///./results/app_db.sqlite')
 DB_URL = (
     f"postgresql+asyncpg://"
+    f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
+    f"@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', 5432)}"
+    f"/{os.getenv('DB_NAME')}"
+)
+
+
+DB_URL_SYNC = (
+    f"postgresql://"
     f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
     f"@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', 5432)}"
     f"/{os.getenv('DB_NAME')}"
@@ -66,6 +74,8 @@ class UploadedFile(Base):
     file_type = Column(String(20))  # pdf, docx, txt (derived from extension)
     user = relationship("User", back_populates="uploaded_files")
     vector_count = Column(Integer, nullable=True)  # Store total chunks indexed for analytics
+    celery_task_id = Column(String(255), nullable=True, index=True)
+    __table_args__ = (UniqueConstraint('user_id', 'file_hash', name='uq_user_file_hash'),)
     # vector_count / num_chunks can be added later for analytics
 
 
