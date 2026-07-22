@@ -81,13 +81,6 @@ services:
       - chroma
     restart: unless-stopped
 
-  qdrant:
-    image: qdrant/qdrant:v1.9.0 
-    container_name: rag_qdrant
-    volumes:
-      - qdrant_data:/qdrant/storage
-    restart: unless-stopped    # restart policy to ensure it stays up
-
   chroma:
     image: chromadb/chroma:1.5.9
     container_name: rag_chroma
