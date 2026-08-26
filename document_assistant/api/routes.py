@@ -290,14 +290,15 @@ async def delete_file(
 @router.post("/api/search", response_model=SearchResponse)
 async def search_documents(
     query: str,
+    force_refresh: bool = False,
     current_user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session)
 ):
     """Search documents using semantic search"""
     try:
         start = time.perf_counter()
-        # check cache
-        cached = await get_cached_search(query, current_user.id)
+        # check cache (bypass when force_refresh=True)
+        cached = None if force_refresh else await get_cached_search(query, current_user.id)
         if cached:
             logger.debug('cache hit')
             search_record = SearchHistory(
@@ -409,14 +410,15 @@ async def health_check():
 @router.post("/api/hybrid_search", response_model=SearchResponse)
 async def hybrid_search(
     query: str,
+    force_refresh: bool = False,
     current_user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session)
 ):
     """Search documents using semantic search"""
     try:
         start = time.perf_counter()
-        # check cache
-        cached = await get_cached_search(query, current_user.id)
+        # check cache (bypass when force_refresh=True)
+        cached = None if force_refresh else await get_cached_search(query, current_user.id)
         if cached:
             logger.debug('########### cache hit')
             search_record = SearchHistory(
@@ -489,6 +491,7 @@ async def hybrid_search(
 async def stream_search(
     request: Request,
     query: str,
+    force_refresh: bool = False,
     current_user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session)
 ):
@@ -498,8 +501,8 @@ async def stream_search(
         tokens = []
         start = time.perf_counter()
         try:
-            # Step 1 — check cache first
-            cached = await get_cached_search(query, current_user.id)
+            # Step 1 — check cache first (bypass when force_refresh=True)
+            cached = None if force_refresh else await get_cached_search(query, current_user.id)
             if cached:
                 # cache hit — send everything at once (already fast)
                 yield f"event: matches\ndata: {json.dumps(cached['matches'])}\n\n"

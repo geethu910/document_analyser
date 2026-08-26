@@ -93,7 +93,8 @@ class FileSearch:
         self.bm25_indexes: dict = {}   # { user_id: BM25Okapi }
         self.bm25_chunks: dict = {}    # { user_id: [chunk texts] }
         self.bm25_ids: dict = {}       # { user_id: [chunk ids] }
-        self.reranker = CrossEncoder(CROSS_ENCODER_MODEL, activation_fn=torch.nn.Sigmoid()) # chunks are 600 token, 110 token got truncated
+        # self.reranker = CrossEncoder(CROSS_ENCODER_MODEL, activation_fn=torch.nn.Sigmoid()) # chunks are 600 token, 110 token got truncated
+        self.reranker = CrossEncoder(CROSS_ENCODER_MODEL) 
         self._initialized = True # mark as initialized, this is done to prevent re initialisation of the same object (we already make it as singleton via means of overriding __new__)
 
     def load_file(self, file_path: str, user_id: str, file_hash: str, original_file_name: str) -> int:
@@ -333,8 +334,15 @@ class FileSearch:
 
         chat_completion = self.groq_client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that answers based only on provided context. If the answer is not explicitly stated, say ‘Not found in the text.’"},
-                {'role': 'user', 'content': f'Context: \n {context}\n Question: {query} Answer with citations like: (File: X, Page: Y)'}], model=LLM_MODEL,
+                {"role": "system", "content": """You are a strict document-grounded answering system.
+
+                RULES (follow exactly — no exceptions):
+                1. Answer ONLY using facts explicitly stated in the provided context — zero outside knowledge
+                2. Every sentence in your answer MUST be directly supported by a specific passage in the context
+                3. Do NOT paraphrase, infer, speculate, or add any detail not present word-for-word in the context
+                4. If the context does not contain enough information, respond ONLY with: 'Not found in the provided documents.'
+                5. Keep answers to 2-4 sentences; cite sources inline as [File: X, Page: Y] after each claim"""},
+                {'role': 'user', 'content': f'Context: \n {context}\n Question: {query}'}], model=LLM_MODEL, temperature=0.0,
         )
         elapsed = time.perf_counter() - t_start
         logger.info("keyword_search completed: user=%s query_len=%d matches=%d time=%.3fs", user_id, len(query), len(search_results), elapsed)
@@ -358,13 +366,14 @@ class FileSearch:
         messages = [
             {
                 "role": "system",
-                "content": """You are a precise document assistant. Follow these rules strictly:
-                1. Answer ONLY using the provided context — never use outside knowledge
-                2. If the query is a topic or name (not a question), summarize what the context says about it
-                3. If the answer is not in the context, respond exactly: 'Not found in the provided documents.'
-                4. Keep answers concise — 3 to 5 sentences maximum
-                5. Always cite your sources inline as [File: X, Page: Y] immediately after each claim
-                6. Never speculate or infer beyond what is explicitly stated"""
+                "content": """You are a strict document-grounded answering system.
+
+                RULES (follow exactly — no exceptions):
+                1. Answer ONLY using facts explicitly stated in the provided context — zero outside knowledge
+                2. Every sentence in your answer MUST be directly supported by a specific passage in the context
+                3. Do NOT paraphrase, infer, speculate, or add any detail not present word-for-word in the context
+                4. If the context does not contain enough information, respond ONLY with: 'Not found in the provided documents.'
+                5. Keep answers to 2-4 sentences; cite sources inline as [File: X, Page: Y] after each claim"""
             },
             {
                 "role": "user",
@@ -402,13 +411,14 @@ class FileSearch:
         messages = [
             {
                 "role": "system",
-                "content": """You are a precise document assistant. Follow these rules strictly:
-                1. Answer ONLY using the provided context — never use outside knowledge
-                2. If the query is a topic or name (not a question), summarize what the context says about it
-                3. If the answer is not in the context, respond exactly: 'Not found in the provided documents.'
-                4. Keep answers concise — 3 to 5 sentences maximum
-                5. Always cite your sources inline as [File: X, Page: Y] immediately after each claim
-                6. Never speculate or infer beyond what is explicitly stated"""
+                "content": """You are a strict document-grounded answering system.
+
+                RULES (follow exactly — no exceptions):
+                1. Answer ONLY using facts explicitly stated in the provided context — zero outside knowledge
+                2. Every sentence in your answer MUST be directly supported by a specific passage in the context
+                3. Do NOT paraphrase, infer, speculate, or add any detail not present word-for-word in the context
+                4. If the context does not contain enough information, respond ONLY with: 'Not found in the provided documents.'
+                5. Keep answers to 2-4 sentences; cite sources inline as [File: X, Page: Y] after each claim"""
             },
             {
                 "role": "user",
@@ -535,7 +545,7 @@ class FileSearch:
         return reranked
 
     def _rerank(self, query: str, chunks: list[dict], top_k: int = 5) -> list[dict]:
-        """Rerank chunks using CrossEncoder — call after RRF
+        """Rerank chunks using CrossEncoder — call after RRF, it tries to rerank the top results from RRF to improve relevance.
         """
         start = time.perf_counter()
         logger.debug("Reranking chunks with CrossEncoder... count=%d", len(chunks))
@@ -547,15 +557,17 @@ class FileSearch:
         #     return ' '.join(words[:max_words]) if len(words) > max_words else text
         # Build (query, chunk text) pairs
         pairs = [(query, chunk['text']) for chunk in chunks]
-        # score all the pairs
+        # score all the pairs, basically it predicts the relevance of each chunk to the query
         ce_scores = self.reranker.predict(pairs)
         # Attach ce score to each chunk
         for i in range(len(chunks)):
             chunks[i]['score'] = float(ce_scores[i])  # replaces original RRF score with CE score for final ranking, you can keep both if you want to analyze later
         # Sort by score and return top_k, filter by weak results
         #  direct questions → high scores, theme queries    → low scores 
-        # reranked = [chunk for chunk in chunks if chunk['score'] >= CE_THRESHOLD]
-        reranked =  sorted(chunks, key=lambda x: x['score'], reverse=True)[:top_k]
+        # reranked =  sorted(chunks, key=lambda x: x['score'], reverse=True)[:top_k]
+        sorted_chunks = sorted(chunks, key=lambda x: x['score'], reverse=True)
+        # return top 1 as a fall back even if all the scores are below threshold
+        reranked = [c for c in sorted_chunks[:top_k] if c['score'] >= CE_THRESHOLD] or sorted_chunks[:1]
         elapsed = time.perf_counter() - start
         logger.debug("Rerank completed: returned=%d time=%.3fs", len(reranked), elapsed)
         return reranked
