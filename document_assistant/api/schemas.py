@@ -51,6 +51,7 @@ class SearchMatch(BaseModel):
     chunk: int
     score: float
     text: str
+    text_full: Optional[str] = None  # Untruncated chunk text (used for evaluation/grounding)
 
 class SearchResponse(BaseModel):
     """Search query response"""

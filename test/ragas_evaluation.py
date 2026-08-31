@@ -1,5 +1,6 @@
 # ragas_eval.py
 import os
+import re
 import pandas as pd
 from dotenv import load_dotenv
 import json
@@ -21,7 +22,21 @@ TOKEN = ""  # replace with bearer token
 load_dotenv()
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 LLM_MODEL = os.getenv('LLM_MODEL', '')
+# Use a STRONG, separate judge model for RAGAS. Faithfulness/answer_relevancy are LLM-judged;
+# a small generator model makes a harsh/unreliable judge and deflates scores. Override via env.
+JUDGE_LLM_MODEL = os.getenv('JUDGE_LLM_MODEL', 'llama-3.3-70b-versatile')
 EMBED_MODEL = os.getenv('EMBED_MODEL', '')
+
+# Matches inline citations like "[File: advs.pdf, Page: 12]" that the answering prompt injects.
+# These add noise that lowers answer_relevancy, so strip them before scoring.
+_CITATION_RE = re.compile(r"\[File:[^\]]*\]")
+
+
+def strip_citations(text: str) -> str:
+    """Remove inline [File: X, Page: Y] citations and collapse leftover whitespace."""
+    if not text:
+        return text
+    return re.sub(r"\s{2,}", " ", _CITATION_RE.sub("", text)).strip()
 
 
 class GroqLLMWrapper(RealWrapper):
@@ -64,8 +79,12 @@ def run_search(query: str, mode: str) -> tuple[str, list[str]]:
     if "answer" not in data:
         raise KeyError(f"'answer' missing in response for query {query!r}. Response keys: {list(data.keys())}. Full response: {data}")
 
-    answer = data["answer"]
-    contexts = [m.get("text", "") for m in data.get("matches", [])]
+    # Strip inline citations
+    answer = strip_citations(data["answer"])
+    # Prefer the untruncated chunk (text_full); fall back to the truncated preview for older responses.
+    # RAGAS faithfulness/context_recall compare against these contexts, so they MUST match what the
+    # LLM actually read — truncated 300-char previews were making grounded answers look unfaithful.
+    contexts = [m.get("text_full") or m.get("text", "") for m in data.get("matches", [])]
     return answer, contexts
 
 def build_ragas_dataset(ground_truth: list, mode: str) -> Dataset:
@@ -89,16 +108,10 @@ def main():
         ground_truth = json.load(f)
 
     metrics = [faithfulness, answer_relevancy, context_recall]
-    for m in metrics:
-        if hasattr(m, '_reproducibility'):
-            m._reproducibility = 1
-            print(f"Patched {m.name}: _reproducibility = 1")
-    # RAGAS needs an LLM for evaluation — use Groq
-    # groq_llm = LangchainLLMWrapper(
-    #     ChatGroq(model=LLM_MODEL, api_key=GROQ_API_KEY, request_timeout=60, max_retries=3, temperature=0, n=1)
-    # )
+    # RAGAS needs an LLM for evaluation. Use a STRONG judge model (JUDGE_LLM_MODEL), separate from
+    # the generator, so faithfulness/answer_relevancy verdicts are reliable. n=1 is required by Groq.
     groq_llm = GroqLLMWrapper(
-        ChatGroq(model=LLM_MODEL, api_key=GROQ_API_KEY, request_timeout=60, max_retries=3, temperature=0)
+        ChatGroq(model=JUDGE_LLM_MODEL, api_key=GROQ_API_KEY, request_timeout=60, max_retries=3, temperature=0)
     )
 
     # for metric in metrics:

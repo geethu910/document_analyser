@@ -103,6 +103,246 @@
     "question": "Describe a character who misjudges another person initially",
     "ground_truth": "Darcy initially misjudges Elizabeth as socially inferior. Holmes misjudges Irene Adler as an adversary he can easily outmaneuver.",
     "source_file": "both"
+  },
+  {
+    "question": "Where does Mr Bingley take up residence, and how does it affect the Bennet family?",
+    "ground_truth": "Mr Bingley rents Netherfield Park near the Bennet home. His arrival as a wealthy single man excites Mrs Bennet, who hopes he will marry one of her daughters.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "Who is Lady Catherine de Bourgh and how does she try to influence Elizabeth?",
+    "ground_truth": "Lady Catherine de Bourgh is Mr Darcy's wealthy, domineering aunt and Mr Collins's patroness. She confronts Elizabeth and demands she promise never to marry Darcy, but Elizabeth refuses to be intimidated.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "What is the entail on the Longbourn estate?",
+    "ground_truth": "Longbourn is entailed to a male heir, meaning the Bennet daughters cannot inherit it. It passes to Mr Collins, which is why Mrs Bennet is anxious to see her daughters married.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "How does Elizabeth's opinion of Mr Darcy change after visiting Pemberley?",
+    "ground_truth": "At Pemberley Elizabeth hears the housekeeper praise Darcy's kindness and sees his handsome estate, which softens her view. His gracious behaviour there begins to change her feelings toward him.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "What role does Mr Darcy's letter play in the story?",
+    "ground_truth": "After Elizabeth rejects him, Darcy writes a letter explaining that he separated Bingley and Jane believing her indifferent, and revealing Wickham's true character. The letter makes Elizabeth reconsider her prejudices.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "Who is Jane Bennet and what is her relationship with Mr Bingley?",
+    "ground_truth": "Jane is the eldest and most beautiful Bennet sister. She and Mr Bingley fall in love, but his friends and Darcy separate them for a time before they are eventually reunited and marry.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "How is Mr Bennet characterised in the novel?",
+    "ground_truth": "Mr Bennet is intelligent but detached and sarcastic, often retreating to his library. He indulges Elizabeth but fails to control his younger daughters, contributing to the family's troubles.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "Why is Mr Collins significant to the Bennet family?",
+    "ground_truth": "Mr Collins is a pompous clergyman and the heir to Longbourn through the entail. He proposes to Elizabeth, and after she refuses, he marries her friend Charlotte Lucas.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "What is Wickham's role in the novel?",
+    "ground_truth": "Wickham is a charming militia officer who spreads lies about Darcy and later elopes with Lydia. His actions threaten the Bennet family's reputation until Darcy intervenes.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "How does the novel end for Elizabeth and Darcy?",
+    "ground_truth": "Darcy proposes a second time and Elizabeth, her feelings transformed, accepts. They marry, uniting love with mutual respect.",
+    "source_file": "Pride.pdf"
+  },
+  {
+    "question": "What happens in The Red-Headed League?",
+    "ground_truth": "Jabez Wilson is hired for a strange, well-paid job because of his red hair, which is a ruse to get him out of his shop. Holmes uncovers that the criminal John Clay is tunnelling from the shop's cellar into a nearby bank.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "What is the solution to The Adventure of the Speckled Band?",
+    "ground_truth": "Dr Grimesby Roylott murders his stepdaughter using a trained venomous snake, the swamp adder, sent through a ventilator. Holmes deduces this, and the snake ultimately turns on and kills Roylott himself.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "Where do Holmes and Watson live?",
+    "ground_truth": "Holmes and Watson share lodgings at 221B Baker Street in London, where many clients come to consult Holmes about their cases.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "What is Dr Watson's background?",
+    "ground_truth": "Dr Watson is a physician and former army doctor who served in Afghanistan. He becomes Holmes's flatmate, friend, and the narrator of his cases.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "How does the King of Bohemia become involved with Holmes?",
+    "ground_truth": "The King of Bohemia hires Holmes to recover a compromising photograph held by Irene Adler, fearing it will ruin his upcoming royal marriage. Adler outwits Holmes and keeps the photograph.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "In A Case of Identity, why did Mr Windibank disguise himself as Hosmer Angel?",
+    "ground_truth": "Windibank disguised himself as Hosmer Angel to court his stepdaughter Mary and then vanish, so she would remain heartbroken and single, keeping her income within the household.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "What personal habits and traits characterise Sherlock Holmes?",
+    "ground_truth": "Holmes is a keen observer who plays the violin and applies rigorous logic and deduction. He is eccentric and often aloof, focusing intensely on his cases.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "What is the significance of the photograph in A Scandal in Bohemia?",
+    "ground_truth": "The photograph shows the King of Bohemia together with Irene Adler and could scandalise his royal marriage. Adler keeps it as protection but promises not to use it, earning Holmes's respect.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "How does Holmes typically begin working with a new client?",
+    "ground_truth": "Holmes first observes the client's appearance and belongings to deduce facts about them before they speak. He then listens to their account and reasons from small details toward a conclusion.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "What kind of stories make up this book?",
+    "ground_truth": "The book is a collection of short detective stories featuring Sherlock Holmes and Dr Watson. Each story presents a mystery that Holmes solves through observation and deduction.",
+    "source_file": "advs.pdf"
+  },
+  {
+    "question": "How do you write a comment in Python?",
+    "ground_truth": "Comments in Python begin with the hash symbol (#), and everything after it on that line is ignored by the interpreter. Comments are used to explain code and improve readability.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "What is a dictionary in Python?",
+    "ground_truth": "A dictionary is a built-in data structure that stores data as key-value pairs. Values are accessed by their keys, and dictionaries are mutable.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How do loops work in Python?",
+    "ground_truth": "Python provides for loops to iterate over sequences and while loops to repeat code as long as a condition is true. Statements like break and continue control their flow.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How do you import and use a module in Python?",
+    "ground_truth": "Modules are imported using the import statement, optionally with the from keyword to import specific names. Once imported, their functions and variables are accessed using dot notation.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How is the theme of reputation important in both books?",
+    "ground_truth": "In Pride and Prejudice reputation determines marriage prospects, as shown by the scandal of Lydia's elopement. In the Sherlock Holmes stories, protecting reputation drives clients like the King of Bohemia to seek Holmes's help.",
+    "source_file": "both"
+  },
+  {
+    "question": "Compare how deception is used by characters in both works.",
+    "ground_truth": "In Pride and Prejudice Wickham deceives others about Darcy's character, while in the Holmes stories figures such as Mr Windibank use disguise to deceive. In both works, the deception is eventually exposed.",
+    "source_file": "both"
+  },
+  {
+    "question": "How do the two books portray marriage as a social or financial arrangement?",
+    "ground_truth": "Pride and Prejudice presents marriage as tied to wealth and status, as with Charlotte marrying Mr Collins for security. In the Holmes stories, marriage prospects and secrets such as the King's are similarly bound to social standing.",
+    "source_file": "both"
+  },
+  {
+    "question": "What is the capital city of Australia?",
+    "ground_truth": "Not found in the provided documents.",
+    "source_file": "none"
+  },
+  {
+    "question": "How do you deploy an application using Kubernetes?",
+    "ground_truth": "Not found in the provided documents.",
+    "source_file": "none"
+  },
+  {
+    "question": "What are the main causes of climate change?",
+    "ground_truth": "Not found in the provided documents.",
+    "source_file": "none"
+  },
+  {
+    "question": "Who won the 2022 FIFA World Cup final?",
+    "ground_truth": "Not found in the provided documents.",
+    "source_file": "none"
+  },
+  {
+    "question": "What is the chemical formula for glucose?",
+    "ground_truth": "Not found in the provided documents.",
+    "source_file": "none"
+  },
+  {
+    "question": "How does the React virtual DOM improve performance?",
+    "ground_truth": "Not found in the provided documents.",
+    "source_file": "none"
+  },
+  {
+    "question": "What is the default index type in PostgreSQL?",
+    "ground_truth": "The default index type in PostgreSQL is the B-tree index, which is suitable for equality and range queries on sortable data. PostgreSQL also provides other index types such as Hash, GiST, SP-GiST, GIN, and BRIN.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What is MVCC in PostgreSQL?",
+    "ground_truth": "MVCC (Multiversion Concurrency Control) lets PostgreSQL provide concurrent access to data without readers blocking writers or writers blocking readers. Each transaction sees a consistent snapshot of the database as it was at the start of the query or transaction.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What does the VACUUM command do in PostgreSQL?",
+    "ground_truth": "VACUUM reclaims storage occupied by dead tuples left behind by updates and deletes. It also helps prevent transaction ID wraparound, and autovacuum performs this maintenance automatically in the background.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What is the default transaction isolation level in PostgreSQL?",
+    "ground_truth": "The default transaction isolation level in PostgreSQL is Read Committed. PostgreSQL also supports the Repeatable Read and Serializable isolation levels.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What is the JSONB data type used for?",
+    "ground_truth": "JSONB stores JSON data in a decomposed binary format that is efficient to process and can be indexed. Unlike the json type, it removes insignificant whitespace, does not preserve key order, and keeps only the last value for duplicate keys.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "How do you create a table in PostgreSQL?",
+    "ground_truth": "A table is created with the CREATE TABLE statement, which specifies the table name and a list of columns with their data types and optional constraints. Constraints such as PRIMARY KEY or NOT NULL can be attached to columns in the definition.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What is a primary key constraint in PostgreSQL?",
+    "ground_truth": "A primary key constraint uniquely identifies each row in a table and disallows null values, effectively combining a unique constraint and a not-null constraint. Each table can have at most one primary key.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What is the purpose of Write-Ahead Logging (WAL)?",
+    "ground_truth": "Write-Ahead Logging (WAL) records changes to a log before they are applied to the data files, ensuring data integrity. This allows the database to recover to a consistent state after a crash and underpins replication.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "How do auto-incrementing columns work in PostgreSQL?",
+    "ground_truth": "The SERIAL pseudo-type creates an auto-incrementing integer column backed by a sequence. PostgreSQL also supports GENERATED AS IDENTITY columns, which follow the SQL standard for the same purpose.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "How does PostgreSQL handle foreign key constraints?",
+    "ground_truth": "A foreign key constraint requires that a column's values match values in a referenced table's column, maintaining referential integrity. Referential actions such as ON DELETE CASCADE or ON DELETE RESTRICT define what happens when referenced rows are deleted.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What is psql?",
+    "ground_truth": "psql is PostgreSQL's interactive terminal client used to enter and execute SQL queries. It also provides backslash meta-commands for tasks such as listing tables and describing database objects.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What are roles in PostgreSQL?",
+    "ground_truth": "Roles manage database access permissions and can represent individual users or groups of users. Privileges are assigned to or removed from roles using the GRANT and REVOKE commands.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What is a Common Table Expression (CTE) in PostgreSQL?",
+    "ground_truth": "A Common Table Expression, defined with the WITH clause, creates a temporary named result set that can be referenced within a query. CTEs improve readability and can be recursive to process hierarchical data.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What does the EXPLAIN command do in PostgreSQL?",
+    "ground_truth": "EXPLAIN displays the execution plan that the PostgreSQL planner generates for a statement, including how tables are scanned and joined. EXPLAIN ANALYZE additionally executes the statement and reports the actual run times.",
+    "source_file": "postgresql_18.pdf"
+  },
+  {
+    "question": "What is table partitioning in PostgreSQL?",
+    "ground_truth": "Partitioning divides one large logical table into smaller physical pieces called partitions. PostgreSQL supports range, list, and hash partitioning, which can improve performance and simplify maintenance of large tables.",
+    "source_file": "postgresql_18.pdf"
   }
 
 ]

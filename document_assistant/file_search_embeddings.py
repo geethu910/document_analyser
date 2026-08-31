@@ -69,7 +69,11 @@ class FileSearch:
         chroma_client = chromadb.HttpClient(host=os.getenv('CHROMA_HOST', 'localhost'), port=int(os.getenv('CHROMA_PORT', 8000)))
         # 2. Create a collection if doesn't exists
         # "l2" → Euclidean distance, "ip" → Inner Product (works like similarity, higher = better), "cosine" → Cosine distance (lower = better)
-        self.collection = chroma_client.get_or_create_collection(name="docs", metadata={"hnsw:space": "ip"})
+        # NOTE: cosine is the correct space for sentence-transformer embeddings. The previous "ip"
+        # space combined with a distance-as-similarity filter (see __keyword_search) silently kept the
+        # WORST matches. If an old "docs" collection already exists with hnsw:space="ip", delete/recreate
+        # it so this cosine setting actually takes effect (Chroma keeps the space set at creation time).
+        self.collection = chroma_client.get_or_create_collection(name="docs", metadata={"hnsw:space": "cosine"})
 
         # 1. Load a pre-trained embedding model
         self.model = SentenceTransformer(EMBED_MODEL) # Small, fast, and good enough for search tasks
@@ -212,7 +216,7 @@ class FileSearch:
             # Step 2: Convert sentences into embeddings (vectors)
             # sentence_embeddings = self.model.encode(docs).tolist()  # Encodes all documents (or text chunks) at once in a single batch, used when the list docs is small 
             # Embed in batches (efficient)
-            sentence_embeddings = self.model.encode(chunks, batch_size=16, show_progress_bar=False).tolist() # Encodes the input in smaller batches of 16 chunks at a time
+            sentence_embeddings = self.model.encode(chunks, batch_size=16, show_progress_bar=False, normalize_embeddings=True).tolist() # Encodes the input in smaller batches of 16 chunks at a time
 
             # collect all info
             all_ids.extend(page_ids)
@@ -259,7 +263,7 @@ class FileSearch:
             logger.debug("Embedding cache hit for key=%s", search_key)
             return self.embedding_cache[search_key]
         t0 = time.perf_counter()
-        embedding = self.model.encode([search_key]).tolist()
+        embedding = self.model.encode([search_key], normalize_embeddings=True).tolist()
         self.embedding_cache[search_key] = embedding
         logger.debug("Computed embedding for key=%s time=%.0fms", search_key, (time.perf_counter()-t0)*1000)
         return embedding
@@ -280,10 +284,13 @@ class FileSearch:
         logger.debug("chroma query time=%.0fms", (time.perf_counter()-t1)*1000)
         filtered_results = []
         t2 = time.perf_counter()
-        # filtering response based on cosine similarity score
-        for doc, score, meta in zip(results['documents'][0],results['distances'][0], results["metadatas"][0]):
-            if score >= THRESHOLD:
-                filtered_results.append({"file": meta["file"], 'page': meta['page_num'], 'chunk': meta['chunk'], "score": score, "text": doc})
+        # Chroma returns a DISTANCE (lower = more similar). Convert to a cosine similarity
+        # (similarity = 1 - distance) before thresholding, otherwise we were keeping the least
+        # relevant chunks and starving the LLM of correct context (hurting faithfulness/recall).
+        for doc, distance, meta in zip(results['documents'][0], results['distances'][0], results["metadatas"][0]):
+            similarity = 1 - distance
+            if similarity >= THRESHOLD:
+                filtered_results.append({"file": meta["file"], 'page': meta['page_num'], 'chunk': meta['chunk'], "score": similarity, "text": doc})
         logger.debug("filter time=%.0fms results=%d", (time.perf_counter()-t2)*1000, len(filtered_results))
         return filtered_results
 

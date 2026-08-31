@@ -326,7 +326,9 @@ async def search_documents(
                 "page": result["page"],
                 "chunk": result["chunk"],
                 "score": result["score"],
-                "text": result["text"][:300] + "..." if len(result["text"]) > 300 else result["text"]
+                "text": result["text"][:300] + "..." if len(result["text"]) > 300 else result["text"],
+                # Untruncated chunk actually used by the LLM (for evaluation/grounding)
+                "text_full": result["text"]
             }
             for result in search_results
         ]
@@ -446,7 +448,9 @@ async def hybrid_search(
                 "page": result["page"],
                 "chunk": result["chunk"],
                 "score": result["score"],
-                "text": result["text"][:300] + "..." if len(result["text"]) > 300 else result["text"]
+                "text": result["text"][:300] + "..." if len(result["text"]) > 300 else result["text"],
+                # Untruncated chunk actually used by the LLM (for evaluation/grounding)
+                "text_full": result["text"]
             }
             for result in search_results
         ]
