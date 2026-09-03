@@ -14,15 +14,17 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from fastapi import Request
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from document_assistant.api.database import (
-    get_async_session, UploadedFile, SearchHistory, User
+    get_async_session, UploadedFile, SearchHistory, User, Conversation
 )
 from document_assistant.api.auth import current_active_user
 from document_assistant.api.schemas import (
-    FileUploadResponse, SearchResponse, UserFilesResponse
+    FileUploadResponse, SearchResponse, UserFilesResponse,
+    ConversationCreate, ConversationRead, ConversationDetail,
+    ConversationTurn, ConversationListResponse
 )
 from document_assistant.services.file_service import FileService
 from document_assistant.services.cache_service import *
@@ -30,6 +32,8 @@ from document_assistant.tasks import process_file_task
 from document_assistant import logger
 
 BASE_UPLOAD_DIRECTORY = '/app/uploads'
+# Number of prior Q/A turns (user+assistant pairs) fed to the model for follow-up handling
+CONVERSATION_HISTORY_TURNS = 3
 # Router
 router = APIRouter()
 
@@ -59,6 +63,174 @@ def get_file_service() -> FileService:
         _file_service = FileService(get_file_search())
         logger.info("FileService created in %.3fs", time.perf_counter() - start)
     return _file_service
+
+
+async def _get_owned_conversation(session: AsyncSession, conversation_id: str, user_id) -> Conversation:
+    """Fetch a conversation and verify it belongs to the current user (404 otherwise)."""
+    try:
+        conversation_uuid = uuid.UUID(str(conversation_id))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid conversation ID")
+    result = await session.execute(
+        select(Conversation).where(
+            Conversation.id == conversation_uuid,
+            Conversation.user_id == user_id,
+        )
+    )
+    conversation = result.scalars().first()
+    if not conversation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+    return conversation
+
+
+async def _load_history(session: AsyncSession, conversation_id, user_id, limit: int = CONVERSATION_HISTORY_TURNS) -> list[dict]:
+    """Return the most recent turns as chat messages in chronological order.
+
+    Each stored turn (SearchHistory row) becomes a user message (query) followed by an
+    assistant message (answer). Only the last `limit` turns are kept (sliding window).
+    """
+    result = await session.execute(
+        select(SearchHistory)
+        .where(
+            SearchHistory.conversation_id == conversation_id,
+            SearchHistory.user_id == user_id,
+        )
+        .order_by(SearchHistory.search_time.desc())
+        .limit(limit)
+    )
+    rows = list(reversed(result.scalars().all()))  # oldest -> newest
+    messages: list[dict] = []
+    for row in rows:
+        messages.append({"role": "user", "content": row.query})
+        messages.append({"role": "assistant", "content": row.answer})
+    return messages
+
+
+@router.post("/api/conversations", response_model=ConversationRead)
+async def create_conversation(
+    payload: ConversationCreate,
+    current_user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Start a new multi-turn conversation."""
+    try:
+        conversation = Conversation(user_id=current_user.id, title=payload.title)
+        session.add(conversation)
+        await session.commit()
+        await session.refresh(conversation)
+        logger.info("Created conversation: user=%s conversation=%s", current_user.id, conversation.id)
+        return ConversationRead(
+            conversation_id=str(conversation.id),
+            title=conversation.title,
+            created_at=conversation.created_at,
+        )
+    except Exception:
+        await session.rollback()
+        logger.error("Error creating conversation", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to create conversation. Please try again later.",
+        )
+
+
+@router.get("/api/conversations", response_model=ConversationListResponse)
+async def list_conversations(
+    current_user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+    limit: int = 50,
+):
+    """List the current user's conversations (most recent first)."""
+    try:
+        result = await session.execute(
+            select(Conversation)
+            .where(Conversation.user_id == current_user.id)
+            .order_by(Conversation.created_at.desc())
+            .limit(limit)
+        )
+        conversations = result.scalars().all()
+        return ConversationListResponse(
+            conversations=[
+                ConversationRead(
+                    conversation_id=str(c.id),
+                    title=c.title,
+                    created_at=c.created_at,
+                )
+                for c in conversations
+            ],
+            total=len(conversations),
+        )
+    except Exception:
+        logger.error("Error listing conversations", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to list conversations. Please try again later.",
+        )
+
+
+@router.get("/api/conversations/{conversation_id}", response_model=ConversationDetail)
+async def get_conversation(
+    conversation_id: str,
+    current_user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get a conversation and its ordered turns."""
+    try:
+        conversation = await _get_owned_conversation(session, conversation_id, current_user.id)
+        result = await session.execute(
+            select(SearchHistory)
+            .where(SearchHistory.conversation_id == conversation.id)
+            .order_by(SearchHistory.search_time)
+        )
+        rows = result.scalars().all()
+        turns: list[ConversationTurn] = []
+        for row in rows:
+            turns.append(ConversationTurn(role="user", content=row.query, created_at=row.search_time))
+            turns.append(ConversationTurn(role="assistant", content=row.answer, created_at=row.search_time))
+        return ConversationDetail(
+            conversation_id=str(conversation.id),
+            title=conversation.title,
+            created_at=conversation.created_at,
+            turns=turns,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("Error retrieving conversation", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to retrieve conversation. Please try again later.",
+        )
+
+
+@router.delete("/api/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    current_user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Delete a conversation. Its turns are detached (conversation_id set to NULL) so
+    search history/analytics are preserved."""
+    try:
+        conversation = await _get_owned_conversation(session, conversation_id, current_user.id)
+        # Detach turns to keep history rows (conversation_id is nullable)
+        await session.execute(
+            update(SearchHistory)
+            .where(SearchHistory.conversation_id == conversation.id)
+            .values(conversation_id=None)
+        )
+        await session.delete(conversation)
+        await session.commit()
+        logger.info("Deleted conversation: user=%s conversation=%s", current_user.id, conversation_id)
+        return {"message": "Conversation deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception:
+        await session.rollback()
+        logger.error("Error deleting conversation", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to delete conversation. Please try again later.",
+        )
 
 @router.post("/api/files/upload", response_model=FileUploadResponse)
 async def upload_file(
@@ -413,21 +585,38 @@ async def health_check():
 async def hybrid_search(
     query: str,
     force_refresh: bool = False,
+    conversation_id: str | None = None,
     current_user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session)
 ):
-    """Search documents using semantic search"""
+    """Search documents using hybrid search, with optional multi-turn conversation support.
+
+    When `conversation_id` is supplied, prior turns are loaded and the follow-up question is
+    rewritten into a standalone query before retrieval, and the recent turns are passed to the
+    LLM for coherent, context-aware answers.
+    """
     try:
         start = time.perf_counter()
-        # check cache (bypass when force_refresh=True)
-        cached = None if force_refresh else await get_cached_search(query, current_user.id)
+
+        # Multi-turn: resolve conversation, load history, and condense the follow-up
+        history: list[dict] = []
+        standalone_query = query
+        if conversation_id:
+            await _get_owned_conversation(session, conversation_id, current_user.id)
+            history = await _load_history(session, conversation_id, current_user.id)
+            standalone_query = get_file_service().condense_query(history, query)
+
+        # check cache (bypass when force_refresh=True). Cache on the standalone query so that
+        # follow-ups resolving to the same question reuse results.
+        cached = None if force_refresh else await get_cached_search(standalone_query, current_user.id)
         if cached:
             logger.debug('########### cache hit')
             search_record = SearchHistory(
                 user_id = current_user.id,
                 query = query,
                 answer = cached['answer'],
-                search_time = datetime.datetime.utcnow()
+                search_time = datetime.datetime.utcnow(),
+                conversation_id = conversation_id
             )
             session.add(search_record)
             await session.commit()
@@ -435,12 +624,13 @@ async def hybrid_search(
             elapsed = time.perf_counter() - start
             logger.info("Hybrid search cache hit: user=%s query_len=%d time=%.3fs", current_user.id, len(query), elapsed)
             return SearchResponse(
-                **cached, search_id=str(search_record.id),
-                created_at=search_record.search_time
+                query=query, answer=cached['answer'], matches=cached['matches'],
+                match_count=cached['match_count'], search_id=str(search_record.id),
+                created_at=search_record.search_time, conversation_id=conversation_id
             )
 
-        # cache miss — perform hybrid search
-        answer, search_results = get_file_service().hybrid_search(query, str(current_user.id))
+        # cache miss — perform hybrid search (history is used for generation only)
+        answer, search_results = get_file_service().hybrid_search(standalone_query, str(current_user.id), history)
         # Format matches for response
         matches = [
             {
@@ -459,13 +649,14 @@ async def hybrid_search(
             user_id = current_user.id,
             query = query,
             answer = answer,
-            search_time = datetime.datetime.utcnow()
+            search_time = datetime.datetime.utcnow(),
+            conversation_id = conversation_id
         )
         session.add(search_record)
         await session.commit()
         await session.refresh(search_record)
 
-        # cache results
+        # cache results (keyed on the standalone query)
         response_payload = {
             "query": query,
             "answer": answer,
@@ -473,13 +664,13 @@ async def hybrid_search(
             "match_count": len(matches)
         }
         logger.debug('cache miss:: adding to db')
-        await cache_search(query, current_user.id, response_payload)
+        await cache_search(standalone_query, current_user.id, response_payload)
         elapsed = time.perf_counter() - start
         logger.info("Hybrid search: user=%s query_len=%d matches=%d time=%.3fs cache_miss=True", current_user.id, len(query), len(matches), elapsed)
         return SearchResponse(
             query=query, answer=answer, search_id=str(search_record.id),
             created_at=search_record.search_time, matches=matches,
-            match_count=len(matches)
+            match_count=len(matches), conversation_id=conversation_id
         )
     except HTTPException:
         raise
@@ -496,17 +687,26 @@ async def stream_search(
     request: Request,
     query: str,
     force_refresh: bool = False,
+    conversation_id: str | None = None,
     current_user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session)
 ):
-    """Hybrid search with SSE streaming"""
+    """Hybrid search with SSE streaming and optional multi-turn conversation support"""
 
     async def event_generator():
         tokens = []
         start = time.perf_counter()
         try:
-            # Step 1 — check cache first (bypass when force_refresh=True)
-            cached = None if force_refresh else await get_cached_search(query, current_user.id)
+            # Step 0 — multi-turn: resolve conversation, load history, condense the follow-up
+            history: list[dict] = []
+            standalone_query = query
+            if conversation_id:
+                await _get_owned_conversation(session, conversation_id, current_user.id)
+                history = await _load_history(session, conversation_id, current_user.id)
+                standalone_query = get_file_service().condense_query(history, query)
+
+            # Step 1 — check cache first (bypass when force_refresh=True); keyed on standalone query
+            cached = None if force_refresh else await get_cached_search(standalone_query, current_user.id)
             if cached:
                 # cache hit — send everything at once (already fast)
                 yield f"event: matches\ndata: {json.dumps(cached['matches'])}\n\n"
@@ -516,9 +716,9 @@ async def stream_search(
                 logger.info("Stream search cache hit: user=%s query_len=%d time=%.3fs", current_user.id, len(query), elapsed)
                 return
 
-            # Step 2 — retrieve chunks (fast ~10ms)
+            # Step 2 — retrieve chunks (fast ~10ms) using the standalone query
             search_results = get_file_service().hybrid_retrieve(
-                query, str(current_user.id)
+                standalone_query, str(current_user.id)
             )
             matches = [
                 {
@@ -534,13 +734,13 @@ async def stream_search(
             # Send matches immediately — frontend renders sources right away
             yield f"event: matches\ndata: {json.dumps(matches)}\n\n"
 
-            # Step 3 — stream tokens from Groq
+            # Step 3 — stream tokens from Groq (history used for generation only)
             if not search_results:
                 yield f"event: token\ndata: {json.dumps('Not found in the provided documents.')}\n\n"
                 tokens.append("Not found in the provided documents.")
             else:
                 async for token in get_file_service().hybrid_generate_stream(
-                    query, search_results
+                    standalone_query, search_results, history
                 ):
                     if await request.is_disconnected():
                         logger.info("Client disconnected, stopping stream")
@@ -555,7 +755,8 @@ async def stream_search(
                 user_id=current_user.id,
                 query=query,
                 answer=''.join(tokens),
-                search_time=datetime.datetime.utcnow()
+                search_time=datetime.datetime.utcnow(),
+                conversation_id=conversation_id
             )
             session.add(search_record)
             await session.commit()
@@ -567,7 +768,7 @@ async def stream_search(
                 "matches": matches,
                 "match_count": len(matches)
             }
-            await cache_search(query, current_user.id, response_payload)
+            await cache_search(standalone_query, current_user.id, response_payload)
 
             # Step 5 — send completion signal with search_id
             elapsed = time.perf_counter() - start

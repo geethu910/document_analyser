@@ -61,6 +61,40 @@ class SearchResponse(BaseModel):
     created_at: datetime
     matches: List[SearchMatch] = []  # ✅ ADD: Top matching chunks
     match_count: int = 0  # ✅ ADD: Number of relevant matches
+    conversation_id: Optional[str] = None  # Set when the search belongs to a multi-turn conversation
+
+
+class ConversationCreate(BaseModel):
+    """Request body to start a new conversation"""
+    title: Optional[str] = None
+
+
+class ConversationRead(BaseModel):
+    """Conversation summary (list/create response)"""
+    conversation_id: str
+    title: Optional[str] = None
+    created_at: datetime
+
+
+class ConversationTurn(BaseModel):
+    """A single message within a conversation"""
+    role: str  # "user" or "assistant"
+    content: str
+    created_at: datetime
+
+
+class ConversationDetail(BaseModel):
+    """Full conversation with its ordered turns"""
+    conversation_id: str
+    title: Optional[str] = None
+    created_at: datetime
+    turns: List[ConversationTurn] = []
+
+
+class ConversationListResponse(BaseModel):
+    """List of a user's conversations"""
+    conversations: List[ConversationRead] = []
+    total: int = 0
 
 
 class UserFilesResponse(BaseModel):

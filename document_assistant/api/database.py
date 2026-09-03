@@ -57,6 +57,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     # relationships creates virtual attributes for accessing data, so that user.uploaded_files and user.search_history work seamlessly  
     uploaded_files = relationship("UploadedFile", back_populates="user")
     search_history = relationship("SearchHistory", back_populates="user")
+    conversations = relationship("Conversation", back_populates="user")
 
 
 class UploadedFile(Base):
@@ -88,7 +89,26 @@ class SearchHistory(Base):
     query = Column(String, nullable=False, index=True)
     answer = Column(String, nullable=False)
     search_time = Column(DateTime, default=datetime.utcnow)
+    # Nullable so existing single-turn searches keep working; set when the turn belongs to a conversation
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True, index=True)
     user = relationship("User", back_populates="search_history")
+    conversation = relationship("Conversation", back_populates="turns")
+
+
+class Conversation(Base):
+    """A multi-turn conversation that groups related search turns (SearchHistory rows)"""
+    __tablename__ = "conversations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False, index=True)
+    title = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    user = relationship("User", back_populates="conversations")
+    turns = relationship(
+        "SearchHistory",
+        back_populates="conversation",
+        order_by="SearchHistory.search_time",
+    )
 
 
 # Async database initialization
