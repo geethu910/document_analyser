@@ -24,7 +24,7 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 LLM_MODEL = os.getenv('LLM_MODEL', '')
 # Use a STRONG, separate judge model for RAGAS. Faithfulness/answer_relevancy are LLM-judged;
 # a small generator model makes a harsh/unreliable judge and deflates scores. Override via env.
-JUDGE_LLM_MODEL = os.getenv('JUDGE_LLM_MODEL', 'llama-3.3-70b-versatile')
+JUDGE_LLM_MODEL = os.getenv('JUDGE_LLM_MODEL', 'qwen/qwen3.6-27b')
 EMBED_MODEL = os.getenv('EMBED_MODEL', '')
 
 # Matches inline citations like "[File: advs.pdf, Page: 12]" that the answering prompt injects.
@@ -54,7 +54,7 @@ def run_search(query: str, mode: str) -> tuple[str, list[str]]:
     try:
         res = httpx.post(
             f"{BASE_URL}{endpoint}",
-            params={"query": query},
+            params={"query": query, "force_refresh": True},
             headers={"Authorization": f"Bearer {TOKEN}"},
             timeout=60
         )
@@ -111,7 +111,8 @@ def main():
     # RAGAS needs an LLM for evaluation. Use a STRONG judge model (JUDGE_LLM_MODEL), separate from
     # the generator, so faithfulness/answer_relevancy verdicts are reliable. n=1 is required by Groq.
     groq_llm = GroqLLMWrapper(
-        ChatGroq(model=JUDGE_LLM_MODEL, api_key=GROQ_API_KEY, request_timeout=60, max_retries=3, temperature=0)
+        ChatGroq(model=JUDGE_LLM_MODEL, api_key=GROQ_API_KEY, request_timeout=60, max_retries=3, reasoning_format="hidden",
+                 temperature=0, max_tokens=16384)
     )
 
     # for metric in metrics:
@@ -122,7 +123,7 @@ def main():
         HuggingFaceEmbeddings(model_name=EMBED_MODEL)
     )
     results = {}
-    for mode in ["semantic", "hybrid"]:
+    for mode in ["hybrid", "semantic"]:
         print(f"\nBuild ragas dataset {mode}...")
         dataset = build_ragas_dataset(ground_truth, mode)
         print(f'######Evaluating {mode}...')

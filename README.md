@@ -7,6 +7,7 @@ A backend system for uploading documents and asking questions, with answers gene
 - Document upload with deduplication and async processing (Celery + Redis)
 - Hybrid search — BM25 keyword search combined with vector similarity using Reciprocal Rank Fusion
 - Streaming LLM-generated answers (SSE)
+- Multi-turn conversations — follow-up questions are condensed into standalone queries using recent turn history, with coherent, context-aware answers
 - List and delete uploaded documents
 - Retrieval quality benchmarked with RAGAS
 
@@ -28,11 +29,12 @@ A backend system for uploading documents and asking questions, with answers gene
 
 Hybrid search was benchmarked against semantic-only search using RAGAS on a 20-question test set. The evaluation covered direct questions, theme/concept queries, cross-file queries, exact-keyword queries, and negative (out-of-domain) queries.
 
-| Metric | Semantic only | Hybrid search |
-|---|---|---|
-| Faithfulness |  0.346 | 0.497 |
-| Answer relevancy | 0.325 | 0.381 |
-| Context recall | 0.750 | 0.780 |
+
+| Metric               | Semantic |   Hybrid |
+|----------------------|----------|----------|
+| faithfulness         |   0.8482 |   0.8203 |
+| answer_relevancy     |   0.6580 |   0.6343 |
+| context_recall       |   0.5531 |   0.5169 |
 
 ## Running locally
 
@@ -53,7 +55,11 @@ API will be available at `http://localhost:8080/docs`.
 | POST | `/api/files/hybrid_upload` | Upload a document, indexing happens async via celery |
 | GET | `/api/files/list` | List uploaded documents |
 | DELETE | `/api/files/{file_id}` | Delete a document |
-| POST | `/api/hybrid_search` | hybrid search((BM25 + semantic + RRF + CrossEncoder)) |
+| POST | `/api/hybrid_search` | hybrid search((BM25 + semantic + RRF + CrossEncoder)), optional `conversation_id` for multi-turn follow-ups |
 | POST | `/api/search` | Semantic-only search (baseline) |
-| POST | `/api/search/stream` | hybrid search with streamed answer |
+| POST | `/api/search/stream` | hybrid search with streamed answer, optional `conversation_id` for multi-turn follow-ups |
 | GET | `/api/search/history` | Get search history for current user |
+| POST | `/api/conversations` | Start a new multi-turn conversation |
+| GET | `/api/conversations` | List the current user's conversations |
+| GET | `/api/conversations/{conversation_id}` | Get a conversation and its ordered turns |
+| DELETE | `/api/conversations/{conversation_id}` | Delete a conversation (turns are detached, not deleted) |

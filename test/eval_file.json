@@ -1,45 +1,5 @@
 [
   {
-    "question": "What is the purpose of indentation in Python?",
-    "ground_truth": "Indentation in Python defines code blocks. Unlike many languages that use braces, Python relies on consistent indentation to indicate scope, such as inside functions, loops, and conditionals.",
-    "source_file": "Python_Programming.pdf"
-  },
-  {
-    "question": "How do you declare a variable in Python?",
-    "ground_truth": "Variables in Python are declared by simply assigning a value to a name using the equals sign. Python is dynamically typed, so no explicit type declaration is needed.",
-    "source_file": "Python_Programming.pdf"
-  },
-  {
-    "question": "What is the difference between a list and a tuple?",
-    "ground_truth": "Lists are mutable sequences, meaning their contents can be changed after creation. Tuples are immutable, so once defined, their elements cannot be modified.",
-    "source_file": "Python_Programming.pdf"
-  },
-  {
-    "question": "How does Python handle functions?",
-    "ground_truth": "Functions in Python are defined using the def keyword. They can take parameters, return values, and support default arguments, keyword arguments, and variable-length arguments.",
-    "source_file": "Python_Programming.pdf"
-  },
-  {
-    "question": "What is the role of the __init__ method in classes?",
-    "ground_truth": "The __init__ method is the constructor in Python classes. It initializes object attributes when a new instance of the class is created.",
-    "source_file": "Python_Programming.pdf"
-  },
-  {
-    "question": "How does Python manage exceptions?",
-    "ground_truth": "Python uses try-except blocks to handle exceptions. Code inside try is executed, and if an error occurs, the except block catches and handles it.",
-    "source_file": "Python_Programming.pdf"
-  },
-  {
-    "question": "What is the difference between Python modules and packages?",
-    "ground_truth": "A module is a single Python file containing code, while a package is a collection of modules organized in directories with an __init__.py file.",
-    "source_file": "Python_Programming.pdf"
-  },
-  {
-    "question": "How does Python support file handling?",
-    "ground_truth": "Python provides built-in functions like open(), read(), write(), and close() to handle files. Files can be opened in different modes such as read, write, and append.",
-    "source_file": "Python_Programming.pdf"
-  },
-  {
     "question": "Why did Charlotte Lucas marry Mr Collins?",
     "ground_truth": "Charlotte married Mr Collins for financial security and social stability rather than love. As a woman of limited means and prospects, she viewed marriage as a practical necessity.",
     "source_file": "Pride.pdf"
@@ -204,14 +164,54 @@
     "ground_truth": "The book is a collection of short detective stories featuring Sherlock Holmes and Dr Watson. Each story presents a mystery that Holmes solves through observation and deduction.",
     "source_file": "advs.pdf"
   },
+   {
+    "question": "What is the purpose of indentation in Python?",
+    "ground_truth": "Indentation in Python defines code blocks. Unlike many languages that use braces, Python relies on consistent indentation to indicate scope, such as inside functions, loops, and conditionals.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How do you declare a variable in Python?",
+    "ground_truth": "Variables in Python are declared by simply assigning a value to a name using the equals sign. Python is dynamically typed, so no explicit type declaration is needed.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "What is an Array in Python and how is it used?",
+    "ground_truth": "An array in Python is a special variable that can hold more than one value at a time, created using square brackets (e.g., data = [1.6, 3.4, 5.5, 9.4]). You can access individual elements by index, loop through the array with a for statement, find its length with len(), and add new elements with the append() method. Other built-in methods include sort(), clear(), copy(), count(), insert(), and remove().",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How does Python handle functions?",
+    "ground_truth": "Functions in Python are defined using the def keyword. They can take parameters, return values, and support default arguments, keyword arguments, and variable-length arguments.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "What is the role of the __init__ method in classes?",
+    "ground_truth": "The __init__ method is the constructor in Python classes. It initializes object attributes when a new instance of the class is created.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How does Python manage exceptions?",
+    "ground_truth": "Python uses try-except blocks to handle exceptions. Code inside try is executed, and if an error occurs, the except block catches and handles it.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "What is PIP and how is it used to install Python packages?",
+    "ground_truth": "PIP is a package manager used to download and install Python packages separately, since Python's core does not include all functionality out of the box. Packages can also be found and installed from the Python Package Index (PyPI) at pypi.org, or obtained in bulk through a distribution like Anaconda, which bundles many commonly used packages together with an editor and interpreter.",
+    "source_file": "Python_Programming.pdf"
+  },
+  {
+    "question": "How does Python support file handling?",
+    "ground_truth": "Python provides built-in functions like open(), read(), write(), and close() to handle files. Files can be opened in different modes such as read, write, and append.",
+    "source_file": "Python_Programming.pdf"
+  },
   {
     "question": "How do you write a comment in Python?",
     "ground_truth": "Comments in Python begin with the hash symbol (#), and everything after it on that line is ignored by the interpreter. Comments are used to explain code and improve readability.",
     "source_file": "Python_Programming.pdf"
   },
   {
-    "question": "What is a dictionary in Python?",
-    "ground_truth": "A dictionary is a built-in data structure that stores data as key-value pairs. Values are accessed by their keys, and dictionaries are mutable.",
+    "question": "How do you create and use your own module in Python?",
+    "ground_truth": "A module is a file containing Python definitions and statements, with the file name being the module name plus the .py suffix. You can consider a module like a code library — a file containing a set of functions you want to reuse. For example, functions defined in a file called fahrenheit.py can be used in another script with 'from fahrenheit import c2f, f2c'.",
     "source_file": "Python_Programming.pdf"
   },
   {

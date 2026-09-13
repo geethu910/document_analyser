@@ -98,7 +98,7 @@ async def _load_history(session: AsyncSession, conversation_id, user_id, limit: 
         .order_by(SearchHistory.search_time.desc())
         .limit(limit)
     )
-    rows = list(reversed(result.scalars().all()))  # oldest -> newest
+    rows = list(reversed(result.scalars().all()))  # older question first -> newest
     messages: list[dict] = []
     for row in rows:
         messages.append({"role": "user", "content": row.query})
@@ -419,6 +419,7 @@ async def delete_file(
     session: AsyncSession = Depends(get_async_session)
 ):
     """Delete a file and remove from vector database"""
+    # TODO: check the behavior when multiple users try to delete the same file simultaneously
     try:
         start = time.perf_counter()
         from uuid import UUID
@@ -513,16 +514,16 @@ async def search_documents(
         session.add(search_record)
         await session.commit()
         await session.refresh(search_record)
-
-        # cache results
-        response_payload = {
-            "query": query,
-            "answer": answer,
-            "matches": matches,
-            "match_count": len(matches)
-        }
-        logger.debug('cache miss:: adding to db')
-        await cache_search(query, current_user.id, response_payload)
+        if not force_refresh:
+            # cache results
+            response_payload = {
+                "query": query,
+                "answer": answer,
+                "matches": matches,
+                "match_count": len(matches)
+            }
+            logger.debug('cache miss:: adding to db')
+            await cache_search(query, current_user.id, response_payload)
         elapsed = time.perf_counter() - start
         logger.info("Search: user=%s query_len=%d matches=%d time=%.3fs cache_miss=True", current_user.id, len(query), len(matches), elapsed)
         return SearchResponse(
@@ -656,15 +657,16 @@ async def hybrid_search(
         await session.commit()
         await session.refresh(search_record)
 
-        # cache results (keyed on the standalone query)
-        response_payload = {
-            "query": query,
-            "answer": answer,
-            "matches": matches,
-            "match_count": len(matches)
-        }
-        logger.debug('cache miss:: adding to db')
-        await cache_search(standalone_query, current_user.id, response_payload)
+        if not force_refresh:
+            # cache results (keyed on the standalone query)
+            response_payload = {
+                "query": query,
+                "answer": answer,
+                "matches": matches,
+                "match_count": len(matches)
+            }
+            logger.debug('cache miss:: adding to db')
+            await cache_search(standalone_query, current_user.id, response_payload)
         elapsed = time.perf_counter() - start
         logger.info("Hybrid search: user=%s query_len=%d matches=%d time=%.3fs cache_miss=True", current_user.id, len(query), len(matches), elapsed)
         return SearchResponse(

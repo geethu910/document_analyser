@@ -21,6 +21,7 @@ services:
       EMAIL_FROM: ${EMAIL_FROM}
       SECRET_KEY: ${SECRET_KEY}
       CROSS_ENCODER_MODEL: ${CROSS_ENCODER_MODEL}
+      HF_HOME: /app/hf_cache
     
     depends_on:
       postgres:
@@ -32,6 +33,7 @@ services:
     restart: unless-stopped
     volumes:
       - uploads:/app/uploads  # persist uploaded files to host
+      - hf_cache:/app/hf_cache
   postgres:
     image: postgres:15-alpine
     container_name: rag_postgres
@@ -110,3 +112,4 @@ volumes:  # define named volumes for data persistence
   qdrant_data:
   chroma_data:
   uploads:  # volume for uploaded files
+  hf_cache:  # volume for Hugging Face cache

@@ -38,6 +38,7 @@ RUN useradd -r -m appuser && \
 
 # Create uploads directory and set ownership
 RUN mkdir -p /app/uploads && chown -R appuser:appuser /app/uploads
+RUN mkdir -p /app/hf_cache && chown -R appuser:appuser /app/hf_cache
 
 # Switch to non-root user
 USER appuser

@@ -24,7 +24,8 @@ import time
 #         *   Combines the top results from both methods and reranks them using a CrossEncoder model for improved relevance.
  
 THRESHOLD = 0.3 # 0.3–0.5
-N_RESULTS = 5
+N_RESULTS = 8
+RERANK_POOL_SIZE = 30
 CE_THRESHOLD = 0.1
 
 load_dotenv()  # # only does something if .env exists (local dev)
@@ -32,6 +33,8 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 LLM_MODEL = os.getenv('LLM_MODEL', '')
 EMBED_MODEL = os.getenv('EMBED_MODEL', '')
 CROSS_ENCODER_MODEL = os.getenv('CROSS_ENCODER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2')
+USE_ONNX_RERANKER = os.getenv('USE_ONNX_RERANKER', 'false').lower() == 'true'
+ONNX_MODEL_DIR = os.path.join('onnx_models', CROSS_ENCODER_MODEL.replace('/', '_'))
 
 @dataclass
 class PageEntry:
@@ -43,6 +46,40 @@ class DocMetadata:
     file: str
     chunk: int
     page_num: int
+
+
+class OnnxReranker:
+    """CrossEncoder-compatible (.predict()) reranker backed by ONNX Runtime for faster CPU inference."""
+
+    def __init__(self, model_name: str, onnx_dir: str, max_length: int = 256):
+        from optimum.onnxruntime import ORTModelForSequenceClassification
+        from transformers import AutoTokenizer
+
+        already_exported = os.path.isdir(onnx_dir) and os.listdir(onnx_dir)
+        self.tokenizer = AutoTokenizer.from_pretrained(onnx_dir if already_exported else model_name)
+        # export=True converts the HF model to ONNX on first run; cached to onnx_dir afterwards
+        self.model = ORTModelForSequenceClassification.from_pretrained(
+            onnx_dir if already_exported else model_name, export=not already_exported
+        )
+        if not already_exported:
+            os.makedirs(onnx_dir, exist_ok=True)
+            self.model.save_pretrained(onnx_dir)
+            self.tokenizer.save_pretrained(onnx_dir)
+        self.max_length = max_length
+
+    def predict(self, pairs: list[tuple[str, str]], batch_size: int = 30, show_progress_bar: bool = False) -> list[float]:
+        scores: list[float] = []
+        for i in range(0, len(pairs), batch_size):
+            batch = pairs[i:i + batch_size]
+            queries = [p[0] for p in batch]
+            texts = [p[1] for p in batch]
+            encoded = self.tokenizer(
+                queries, texts, padding=True, truncation=True, max_length=self.max_length, return_tensors='pt'
+            )
+            logits = self.model(**encoded).logits
+            batch_scores = torch.sigmoid(logits.squeeze(-1))
+            scores.extend(batch_scores.tolist())
+        return scores
 
 
 class FileSearch:
@@ -98,8 +135,23 @@ class FileSearch:
         self.bm25_chunks: dict = {}    # { user_id: [chunk texts] }
         self.bm25_ids: dict = {}       # { user_id: [chunk ids] }
         # self.reranker = CrossEncoder(CROSS_ENCODER_MODEL, activation_fn=torch.nn.Sigmoid()) # chunks are 600 token, 110 token got truncated
-        self.reranker = CrossEncoder(CROSS_ENCODER_MODEL) 
+        self.reranker = self._load_reranker()
         self._initialized = True # mark as initialized, this is done to prevent re initialisation of the same object (we already make it as singleton via means of overriding __new__)
+        torch.set_num_threads(os.cpu_count() or 4) # avoid oversubscribing threads beyond available cores
+
+    def _load_reranker(self):
+        """Load the cross-encoder reranker, preferring ONNX Runtime for faster CPU inference when enabled."""
+        if USE_ONNX_RERANKER:
+            try:
+                reranker = OnnxReranker(CROSS_ENCODER_MODEL, ONNX_MODEL_DIR, max_length=256)
+                logger.info("Loaded ONNX reranker from %s", ONNX_MODEL_DIR)
+                return reranker
+            except Exception:
+                logger.warning("ONNX reranker unavailable, falling back to PyTorch CrossEncoder", exc_info=True)
+        reranker = CrossEncoder(CROSS_ENCODER_MODEL, max_length=256)  # set max_length as no need to pass complete chunk to the crossencoder (expensive)
+        # dynamic int8 quantization of the Linear layers -> ~2-3x faster CPU inference, negligible accuracy loss for BERT-sized rerankers
+        reranker.model = torch.quantization.quantize_dynamic(reranker.model, {torch.nn.Linear}, dtype=torch.qint8)
+        return reranker
 
     def load_file(self, file_path: str, user_id: str, file_hash: str, original_file_name: str) -> int:
         """Load a file (txt, pdf, docx), extract text, and split into sentences."""
@@ -268,7 +320,7 @@ class FileSearch:
         logger.debug("Computed embedding for key=%s time=%.0fms", search_key, (time.perf_counter()-t0)*1000)
         return embedding
         
-    def __keyword_search(self, search_key:str, user_id: str) -> list:
+    def __keyword_search(self, search_key:str, user_id: str, fetch_k: int = 30, final_k: int = 8) -> list:
         """Search for keyword in stored sentences."""
         t0 = time.perf_counter()
         # step4: query
@@ -278,7 +330,7 @@ class FileSearch:
         t1 = time.perf_counter()
         results = self.collection.query(
             query_embeddings=query_embedding,
-            n_results=N_RESULTS, # return top 5
+            n_results=fetch_k, # return top fetch_k
             where={"user_id": user_id}
         )
         logger.debug("chroma query time=%.0fms", (time.perf_counter()-t1)*1000)
@@ -287,12 +339,24 @@ class FileSearch:
         # Chroma returns a DISTANCE (lower = more similar). Convert to a cosine similarity
         # (similarity = 1 - distance) before thresholding, otherwise we were keeping the least
         # relevant chunks and starving the LLM of correct context (hurting faithfulness/recall).
+        candidates = []
         for doc, distance, meta in zip(results['documents'][0], results['distances'][0], results["metadatas"][0]):
-            similarity = 1 - distance
-            if similarity >= THRESHOLD:
-                filtered_results.append({"file": meta["file"], 'page': meta['page_num'], 'chunk': meta['chunk'], "score": similarity, "text": doc})
-        logger.debug("filter time=%.0fms results=%d", (time.perf_counter()-t2)*1000, len(filtered_results))
-        return filtered_results
+            candidates.append(
+                {
+                    "file": meta["file"], 
+                    'page': meta['page_num'], 
+                    'chunk': meta['chunk'],
+                    "score": 1 - distance, 
+                    "text": doc})
+            # similarity = 1 - distance
+            # if similarity >= THRESHOLD:
+            #     filtered_results.append({"file": meta["file"], 'page': meta['page_num'], 'chunk': meta['chunk'], "score": similarity, "text": doc})
+        # rerank the results
+        reranked = self._rerank(search_key, candidates, top_k=final_k)
+        logger.debug("rerank time=%.0fms results=%d", (time.perf_counter()-t2)*1000, len(reranked))
+        return reranked
+        # logger.debug("filter time=%.0fms results=%d", (time.perf_counter()-t2)*1000, len(filtered_results))
+        # return filtered_results
 
     def delete_from_db(self, file_hash:str, user_id: str) -> None:
         """ delete entries from vector db """
@@ -495,7 +559,7 @@ class FileSearch:
         corpus = [doc.lower().split() for doc in results['documents']]
         self.bm25_indexes[user_id] = BM25Okapi(corpus)  # build BM25 index for the user's documents
 
-    def _hybrid_retrieve(self, query: str, user_id: str, top_k: int = 10) -> list:
+    def _hybrid_retrieve(self, query: str, user_id: str, rerank_pool: int = 20, final_top_k: int = 8) -> list:
         """Build BM25 index for the user's documents (for keyword search)"""
 
         """
@@ -533,7 +597,8 @@ class FileSearch:
         start = time.perf_counter()
         logger.debug("Starting hybrid retrieval for query: %s", query)
         # bm25
-        fetch_k = top_k * 4  # fetch 40 if you want top 5 final results (ce output)
+        fetch_k = 40
+        # fetch_k = top_k * 4  # fetch 40 if you want top 5 final results (ce output)
         query_tokens = query.lower().split()
 
         if user_id not in self.bm25_indexes:
@@ -576,7 +641,7 @@ class FileSearch:
             #              if chunk in both → adds on top of existing BM25 score
 
         # Final ranking
-        final_ranked_ids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:top_k]
+        final_ranked_ids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:rerank_pool]
         results = self.collection.get(ids=final_ranked_ids, include=["documents", "metadatas"])
 
         rrf_results = []
@@ -591,8 +656,24 @@ class FileSearch:
                     "text": doc
                 }
             )
-        # cross encoder 10 -> 5
-        reranked = self._rerank(query, rrf_results, top_k=5)
+        # cross encoder fetch_k -> top_k (was hardcoded to 5, ignoring the top_k param — capped recall)
+        reranked = self._rerank(query, rrf_results, top_k=final_top_k)
+
+        # CE reranking can let one source file dominate the whole top_k, starving cross-document
+        # ("both") questions of the other file's evidence even though RRF surfaced it. Backfill the
+        # best RRF-scored chunk from each missing file while slots remain.
+        present_files = {c["file"] for c in reranked}
+        missing_files = {c["file"] for c in rrf_results} - present_files
+        if missing_files and len(reranked) < final_top_k:
+            best_per_missing_file = {}
+            for c in sorted(rrf_results, key=lambda x: x["score"], reverse=True):
+                if c["file"] in missing_files and c["file"] not in best_per_missing_file:
+                    best_per_missing_file[c["file"]] = c
+            for candidate in best_per_missing_file.values():
+                if len(reranked) >= final_top_k:
+                    break
+                reranked.append(candidate)
+
         elapsed = time.perf_counter() - start
         logger.debug("Hybrid retrieve finished: query=%s returned=%d time=%.3fs", query, len(reranked), elapsed)
         return reranked
@@ -604,14 +685,12 @@ class FileSearch:
         logger.debug("Reranking chunks with CrossEncoder... count=%d", len(chunks))
         if not chunks:
             return []
-        # def trim(text: str, max_words: int = 350) -> str:
-        #     # trim chunk text before passing to CE (CE has max token limit of 512, we can assume 1 word ~ 1.5 tokens on average, so 350 words ~ 525 tokens, leaving room for query and prompt)
-        #     words = text.split()
-        #     return ' '.join(words[:max_words]) if len(words) > max_words else text
+        # No manual trimming needed: max_length=256 already bounds tokenization/forward cost regardless of input length
         # Build (query, chunk text) pairs
         pairs = [(query, chunk['text']) for chunk in chunks]
         # score all the pairs, basically it predicts the relevance of each chunk to the query
-        ce_scores = self.reranker.predict(pairs)
+        # ce_scores = self.reranker.predict(pairs)
+        ce_scores = self.reranker.predict(pairs, batch_size=30, show_progress_bar=False)
         # Attach ce score to each chunk
         for i in range(len(chunks)):
             chunks[i]['score'] = float(ce_scores[i])  # replaces original RRF score with CE score for final ranking, you can keep both if you want to analyze later
