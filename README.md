@@ -27,14 +27,18 @@ A backend system for uploading documents and asking questions, with answers gene
 
 ## Retrieval evaluation
 
-Hybrid search was benchmarked against semantic-only search using RAGAS on a 20-question test set. The evaluation covered direct questions, theme/concept queries, cross-file queries, exact-keyword queries, and negative (out-of-domain) queries.
+Hybrid search was benchmarked against semantic-only search using RAGAS on a 69-question test set spanning multiple document types (`test/eval_file.json`):
 
+- **Literary/fiction documents** — character, plot, and relationship questions
+- **Technical documents** — language/syntax and database concept questions
+
+The evaluation covered direct questions, theme/concept queries, cross-file queries, exact-keyword queries, and negative (out-of-domain) queries.
 
 | Metric               | Semantic |   Hybrid |
 |----------------------|----------|----------|
 | faithfulness         |   0.8482 |   0.8203 |
 | answer_relevancy     |   0.6580 |   0.6343 |
-| context_recall       |   0.5531 |   0.5169 |
+| context_recall       |   0.5531 |   0.5369 |
 
 ## Running locally
 
