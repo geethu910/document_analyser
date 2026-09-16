@@ -22,7 +22,9 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       CROSS_ENCODER_MODEL: ${CROSS_ENCODER_MODEL}
       HF_HOME: /app/hf_cache
-    
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME}  # hybrid_upload hands raw files to the worker via this bucket
+      GOOGLE_APPLICATION_CREDENTIALS: /app/gcp-key.json
+
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,6 +36,7 @@ services:
     volumes:
       - uploads:/app/uploads  # persist uploaded files to host
       - hf_cache:/app/hf_cache
+      - ./gcp-key.json:/app/gcp-key.json:ro  # service account key with GCS access, see README
   postgres:
     image: postgres:15-alpine
     container_name: rag_postgres
@@ -75,8 +78,11 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       EMBED_MODEL: ${EMBED_MODEL}
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME}
+      GOOGLE_APPLICATION_CREDENTIALS: /app/gcp-key.json
     volumes:
       - uploads:/app/uploads
+      - ./gcp-key.json:/app/gcp-key.json:ro
     depends_on:
       - redis
       - postgres

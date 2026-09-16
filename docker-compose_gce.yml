@@ -1,0 +1,68 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: rag_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"  # reachable via the VPC connector from Cloud Run; not exposed publicly (see firewall rule)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:  # add healthcheck to ensure Postgres is ready before other services depend on it
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME} || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped # If the container crashes or exits, start it again.
+
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    ports:
+      - "6379:6379"  # reachable via the VPC connector from Cloud Run; not exposed publicly. No auth configured — accepted risk for this temporary setup.
+    restart: unless-stopped
+
+  chroma:
+    image: chromadb/chroma:1.5.9
+    container_name: rag_chroma
+    ports:
+      - "8000:8000"  # reachable via the VPC connector from Cloud Run; not exposed publicly. No auth configured — accepted risk for this temporary setup.
+    volumes:
+      - chroma_data:/data   # <-- persist chroma server storage to host
+    restart: unless-stopped
+
+  worker:
+    image: <REGION>-docker.pkg.dev/<PROJECT_ID>/rag-images/document-analyser-api:v1
+    command: celery -A document_assistant.tasks worker --loglevel=info
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      # chroma service
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      # postgres service
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}  # these should be set in a .env file or shell environment before running
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      EMBED_MODEL: ${EMBED_MODEL}
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME}
+      GOOGLE_APPLICATION_CREDENTIALS: /app/gcp-key.json
+    volumes:
+      - uploads:/app/uploads
+      - ./gcp-key.json:/app/gcp-key.json:ro  # service account key with GCS read/write access
+    depends_on:
+      - redis
+      - postgres
+      - chroma
+    restart: unless-stopped
+
+volumes:  # define named volumes for data persistence
+  postgres_data:
+  chroma_data:
+  uploads:  # volume for uploaded files (worker's local scratch space when downloading from GCS)

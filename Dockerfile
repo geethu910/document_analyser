@@ -32,13 +32,24 @@ COPY static/ ./static/
 # Install dependencies
 RUN poetry install --only main
 
+# Bake the embedding/cross-encoder models into the image so Cloud Run cold starts don't hit
+# Hugging Face over the network. These build args MUST match the EMBED_MODEL/CROSS_ENCODER_MODEL
+# env vars set at deploy time — otherwise HF_HOME won't have that model cached and it silently
+# falls back to downloading from HF at runtime.
+ARG EMBED_MODEL=all-MiniLM-L6-v2
+ARG CROSS_ENCODER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+ENV HF_HOME=/app/hf_cache
+RUN mkdir -p /app/hf_cache && \
+    python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
+SentenceTransformer('${EMBED_MODEL}'); CrossEncoder('${CROSS_ENCODER_MODEL}')"
+
 # create user
 RUN useradd -r -m appuser && \
     chown -R appuser:appuser /app
 
 # Create uploads directory and set ownership
 RUN mkdir -p /app/uploads && chown -R appuser:appuser /app/uploads
-RUN mkdir -p /app/hf_cache && chown -R appuser:appuser /app/hf_cache
+RUN chown -R appuser:appuser /app/hf_cache
 
 # Switch to non-root user
 USER appuser

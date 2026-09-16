@@ -31,7 +31,8 @@ from document_assistant.services.cache_service import *
 from document_assistant.tasks import process_file_task
 from document_assistant import logger
 
-BASE_UPLOAD_DIRECTORY = '/app/uploads'
+GCS_BUCKET_NAME = os.getenv('GCS_BUCKET_NAME', '')
+GCS_UPLOAD_PREFIX = 'uploads'
 # Number of prior Q/A turns (user+assistant pairs) fed to the model for follow-up handling
 CONVERSATION_HISTORY_TURNS = 3
 # Router
@@ -40,6 +41,15 @@ router = APIRouter()
 # File search lazy loading (singleton)
 _file_search_instance: None = None
 _file_service: None = None
+_gcs_bucket = None
+
+def get_gcs_bucket():
+    """Lazy load the GCS bucket handle used to hand raw uploads off to the Celery worker"""
+    global _gcs_bucket
+    if _gcs_bucket is None:
+        from google.cloud import storage
+        _gcs_bucket = storage.Client().bucket(GCS_BUCKET_NAME)
+    return _gcs_bucket
 
 # This is added to ensure that the FileSearch class is only initialized when needed, which allows the API to start up faster without waiting for the model to download. The first time get_file_search() is called, it will import and create an instance of FileSearch. Subsequent calls will return the already initialized instance.
 def get_file_search():
@@ -801,6 +811,8 @@ async def hybrid_upload(
     session: AsyncSession = Depends(get_async_session)
 ):
     """Upload a document file (PDF, DOCX, TXT)"""
+    temp_path = None
+    blob_name = None
     try:
         start = time.perf_counter()
         # get service
@@ -812,10 +824,9 @@ async def hybrid_upload(
                 detail="Unsupported file type. Only PDF, DOCX, and TXT are allowed."
             )
         file_ext = Path(file.filename).suffix.lower()
-        # Step 2: Create temp file and stream upload
-        base_dir = os.path.join(BASE_UPLOAD_DIRECTORY, str(current_user.id))
-        os.makedirs(base_dir, exist_ok=True)
-        temp_path = os.path.join(base_dir, f"{uuid.uuid4()}.tmp")
+        # Step 2: Stream upload to a local temp file (just for hashing — no shared disk with the worker anymore)
+        os.makedirs("./temp_uploads", exist_ok=True)
+        temp_path = os.path.join("./temp_uploads", f"{uuid.uuid4()}.tmp")
         # Stream file in chunks (4KB at a time)
         hasher = hashlib.sha256()
         chunk_size = 4096
@@ -840,9 +851,12 @@ async def hybrid_upload(
                     )
 
         file_hash = hasher.hexdigest()
-        final_path = os.path.join(base_dir, f"{file_hash}{file_ext}")
-        os.replace(temp_path, final_path)  # Move temp file to final location with hash
-     
+        # Step 3: Hand the file off to the worker via GCS instead of a shared volume
+        blob_name = f"{GCS_UPLOAD_PREFIX}/{current_user.id}/{file_hash}{file_ext}"
+        get_gcs_bucket().blob(blob_name).upload_from_filename(temp_path)
+        os.unlink(temp_path)
+        file_uri = f"gs://{GCS_BUCKET_NAME}/{blob_name}"
+
         # step 4: check if file is already loaded for the current user
         existing = await session.execute(
             select(UploadedFile).where(
@@ -898,7 +912,7 @@ async def hybrid_upload(
         # Process the uploaded file and add to vector database as a background task using celery.
         try:
             task = process_file_task.delay(
-                temp_file_path=final_path,  # passing persistant file path 
+                file_uri=file_uri,  # gs:// URI the worker downloads before processing
                 user_id=str(current_user.id),
                 file_hash=file_hash,
                 original_file_name=file.filename
@@ -907,9 +921,7 @@ async def hybrid_upload(
             logger.error("Failed to enqueue processing task for %s: %s", file.filename, e, exc_info=True)
             new_file.status = "failed"
             await session.commit()
-            for path in [temp_path, final_path]:    # clean up files
-                if path and os.path.exists(path):
-                    os.unlink(path)
+            get_gcs_bucket().blob(blob_name).delete()
             raise HTTPException(status_code=503, detail="Upload accepted but processing queue is unavailable. Please retry.")
 
         # may also add task.id to database
@@ -933,9 +945,10 @@ async def hybrid_upload(
 
     except Exception as e:
         await session.rollback()  # Rollback any pending transactions in case of error
-        for path in [temp_path, final_path]:    # clean up files
-            if path and os.path.exists(path):
-                os.unlink(path)
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+        if blob_name:
+            get_gcs_bucket().blob(blob_name).delete()
         logger.error("Error processing file upload", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
