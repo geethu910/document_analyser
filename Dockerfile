@@ -36,8 +36,8 @@ RUN poetry install --only main
 # Hugging Face over the network. These build args MUST match the EMBED_MODEL/CROSS_ENCODER_MODEL
 # env vars set at deploy time — otherwise HF_HOME won't have that model cached and it silently
 # falls back to downloading from HF at runtime.
-ARG EMBED_MODEL=all-MiniLM-L6-v2
-ARG CROSS_ENCODER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+ARG EMBED_MODEL=BAAI/bge-base-en-v1.5
+ARG CROSS_ENCODER_MODEL=mixedbread-ai/mxbai-rerank-base-v1
 ENV HF_HOME=/app/hf_cache
 RUN mkdir -p /app/hf_cache && \
     python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \

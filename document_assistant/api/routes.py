@@ -320,17 +320,18 @@ async def upload_file(
                 logger.debug(f'Replacing older version of {file.filename}')
                 # delete file from both places
                 # delete from vector db
-                get_file_service().delete_file(existing_file.file_hash, str(current_user.id))
+                await asyncio.to_thread(get_file_service().delete_file, existing_file.file_hash, str(current_user.id))
                 # delete from database
                 await session.delete(existing_file)
                 await session.commit()
             
         # create embeddings and add to vector database
         idx_start = time.perf_counter()
-        chunk_count = file_service.upload_file(
-            temp_file_path, user_id=str(current_user.id), 
+        chunk_count = await asyncio.to_thread(
+            file_service.upload_file,
+            temp_file_path, user_id=str(current_user.id),
             file_hash=file_hash,
-            original_file_name = file.filename
+            original_file_name=file.filename
             )  # Process the uploaded file and add to vector database
         logger.info("Indexing complete: user=%s file=%s vectors=%s time=%.3fs", current_user.id, file.filename, chunk_count, time.perf_counter() - idx_start)
 
@@ -450,7 +451,7 @@ async def delete_file(
                 detail = "File not found"
             )
         # delete from vector db
-        get_file_service().delete_file(db_file.file_hash, str(current_user.id))
+        await asyncio.to_thread(get_file_service().delete_file, db_file.file_hash, str(current_user.id))
         # delete from database
         await session.delete(db_file)
         await session.commit()
@@ -501,7 +502,7 @@ async def search_documents(
             )
 
         # cache miss — perform search
-        answer, search_results = get_file_service().keyword_search(query, str(current_user.id))
+        answer, search_results = await asyncio.to_thread(get_file_service().keyword_search, query, str(current_user.id))
         # Format matches for response
         matches = [
             {
@@ -615,7 +616,7 @@ async def hybrid_search(
         if conversation_id:
             await _get_owned_conversation(session, conversation_id, current_user.id)
             history = await _load_history(session, conversation_id, current_user.id)
-            standalone_query = get_file_service().condense_query(history, query)
+            standalone_query = await asyncio.to_thread(get_file_service().condense_query, history, query)
 
         # check cache (bypass when force_refresh=True). Cache on the standalone query so that
         # follow-ups resolving to the same question reuse results.
@@ -641,7 +642,9 @@ async def hybrid_search(
             )
 
         # cache miss — perform hybrid search (history is used for generation only)
-        answer, search_results = get_file_service().hybrid_search(standalone_query, str(current_user.id), history)
+        # run hybrid search in a separate thread to avoid blocking the event loop
+        answer, search_results = await asyncio.to_thread(get_file_service().hybrid_search, standalone_query, str(current_user.id), history)
+
         # Format matches for response
         matches = [
             {
@@ -715,7 +718,7 @@ async def stream_search(
             if conversation_id:
                 await _get_owned_conversation(session, conversation_id, current_user.id)
                 history = await _load_history(session, conversation_id, current_user.id)
-                standalone_query = get_file_service().condense_query(history, query)
+                standalone_query = await asyncio.to_thread(get_file_service().condense_query, history, query)
 
             # Step 1 — check cache first (bypass when force_refresh=True); keyed on standalone query
             cached = None if force_refresh else await get_cached_search(standalone_query, current_user.id)
@@ -729,8 +732,8 @@ async def stream_search(
                 return
 
             # Step 2 — retrieve chunks (fast ~10ms) using the standalone query
-            search_results = get_file_service().hybrid_retrieve(
-                standalone_query, str(current_user.id)
+            search_results = await asyncio.to_thread(
+                get_file_service().hybrid_retrieve, standalone_query, str(current_user.id)
             )
             matches = [
                 {
@@ -883,7 +886,7 @@ async def hybrid_upload(
                 logger.info(f'Replacing older version of {file.filename}')
                 # delete file from both places
                 # delete from vector db
-                get_file_service().delete_file(existing_file.file_hash, str(current_user.id))
+                await asyncio.to_thread(get_file_service().delete_file, existing_file.file_hash, str(current_user.id))
                 # delete from database
                 await session.delete(existing_file)
                 await session.commit()
