@@ -52,10 +52,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       EMBED_MODEL: ${EMBED_MODEL}
       GCS_BUCKET_NAME: ${GCS_BUCKET_NAME}
-      GOOGLE_APPLICATION_CREDENTIALS: /app/gcp-key.json
     volumes:
       - uploads:/app/uploads
-      - ./gcp-key.json:/app/gcp-key.json:ro  # service account key with GCS read/write access
     depends_on:
       - redis
       - postgres
